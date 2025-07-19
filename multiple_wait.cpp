@@ -17,11 +17,11 @@ struct SimEventBase {
 };
 
 // Concrete event for coroutine handles
-struct CoroutineEvent : SimEventBase {
+struct CoroutineProcess : SimEventBase {
     std::coroutine_handle<> handle;
     std::string label;
 
-    CoroutineEvent(int t, std::coroutine_handle<> h, std::string lbl)
+    CoroutineProcess(int t, std::coroutine_handle<> h, std::string lbl)
         : handle(h), label(std::move(lbl)) {
         sim_time = t;
     }
@@ -48,7 +48,7 @@ void print_event_queue_state() {
         auto e = event_queue.top();
         event_queue.pop();
         std::cout << "  - Scheduled at: " << e->sim_time;
-        if (auto ce = dynamic_cast<CoroutineEvent*>(e)) {
+        if (auto ce = dynamic_cast<CoroutineProcess*>(e)) {
             std::cout << " [Coroutine: " << ce->label << "]";
         } else {
             std::cout << " (" << typeid(*e).name() << ")";
@@ -73,7 +73,7 @@ struct SimDelay {
     bool await_ready() const noexcept { return false; }
 
     void await_suspend(std::coroutine_handle<> h) const {
-        event_queue.push(new CoroutineEvent(wake_time, h, "SimDelay"));
+        event_queue.push(new CoroutineProcess(wake_time, h, "SimDelay"));
     }
 
     void await_resume() const noexcept {}
@@ -112,7 +112,7 @@ struct SimEvent : SimEventBase {
     void trigger(int time) {
         for (size_t i = 0; i < waiters.size(); ++i) {
             const auto& [h, label] = waiters[i];
-            event_queue.push(new CoroutineEvent(time, h, "SimEvent::trigger -> " + label));
+            event_queue.push(new CoroutineProcess(time, h, "SimEvent::trigger -> " + label));
         }
         waiters.clear();
     }
@@ -154,17 +154,31 @@ struct LabeledAwait {
     auto await_resume() { return ev.await_resume(); }
 };
 
+Task subc(SimEvent& ev) {
+    std::cout << "[" << sim_time << "] sub_process started\n";
+    co_await SimDelay(130);
+    std::cout << "[" << sim_time << "] sub_process finished\n";
+    ev.set_value(std::string("sub_done"));
+    ev.trigger(sim_time);
+}
+
 // The coroutine process that we’ll start via event queue
-Task processA(SimEvent& e) {
+Task processA(SimEvent& e, SimEvent& sub_event) {
     std::cout << "[" << sim_time << "] processA waiting...\n";
     auto val = co_await LabeledAwait{e, "processA"};
     std::cout << "[" << sim_time << "] processA resumed with: " << std::get<std::string>(val) << "\n";
+
+    auto sub_val = co_await LabeledAwait{sub_event, "processA"};
+    std::cout << "[" << sim_time << "] processA done waiting on sub_process\n";
 }
 
-Task processB(SimEvent& e) {
+Task processB(SimEvent& e, SimEvent& sub_event) {
     std::cout << "[" << sim_time << "] processB waiting...\n";
     auto val = co_await LabeledAwait{e, "processB"};
     std::cout << "[" << sim_time << "] processB resumed with: " << std::get<std::string>(val) << "\n";
+
+    auto sub_val = co_await LabeledAwait{sub_event, "processB"};
+    std::cout << "[" << sim_time << "] processB done waiting on sub_process\n";
 }
 
 Task trigger_process(SimEvent& e) {
@@ -178,15 +192,18 @@ Task trigger_process(SimEvent& e) {
 
 int main() {
     SimEvent shared_event;
+    SimEvent sub_event;
 
-    auto ta = processA(shared_event);
-    auto tb = processB(shared_event);
+    auto ta = processA(shared_event, sub_event);
+    auto tb = processB(shared_event, sub_event);
     auto tc = trigger_process(shared_event);
+    auto td = subc(sub_event);
 
     // Manually enqueue initial coroutine entries
-    event_queue.push(new CoroutineEvent(0, tc.h, "trigger_process"));
-    event_queue.push(new CoroutineEvent(0, ta.h, "processA"));
-    event_queue.push(new CoroutineEvent(0, tb.h, "processB"));
+    event_queue.push(new CoroutineProcess(0, tc.h, "trigger_process"));
+    event_queue.push(new CoroutineProcess(0, ta.h, "processA"));
+    event_queue.push(new CoroutineProcess(0, tb.h, "processB"));
+    event_queue.push(new CoroutineProcess(0, td.h, "sub_process"));
 
     while (!event_queue.empty()) {
         print_event_queue_state();  // 🔍 Print before processing
