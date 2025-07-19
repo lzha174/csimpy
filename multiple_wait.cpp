@@ -182,18 +182,14 @@ Task subc() {
 Task processA(Task& td) {
     std::cout << "[" << sim_time << "] processA waiting...\n";
     auto sub_val = co_await LabeledAwait{td.get_completion_event(), "processA"};
-    std::cout << "[" << sim_time << "] processA resumed with: ";
 
-    std::cout << "\n";
     std::cout << "[" << sim_time << "] processA done waiting on sub_process\n";
 }
 
 Task processB(Task& td) {
     std::cout << "[" << sim_time << "] processB waiting...\n";
     auto sub_val = co_await LabeledAwait{td.get_completion_event(), "processB"};
-    std::cout << "[" << sim_time << "] processB resumed with: ";
 
-    std::cout << "\n";
     std::cout << "[" << sim_time << "] processB done waiting on sub_process\n";
 }
 
@@ -221,7 +217,7 @@ int main() {
     event_queue.push(new CoroutineProcess(0, tt.h, "trigger_process"));
 
     while (!event_queue.empty()) {
-        print_event_queue_state();  // 🔍 Print before processing
+        //print_event_queue_state();  // 🔍 Print before processing
 
         SimEventBase* ev = event_queue.top();
         event_queue.pop();
