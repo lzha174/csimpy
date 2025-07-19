@@ -9,18 +9,32 @@
 int sim_time = 0;
 
 
-// Scheduled coroutine event
-struct ScheduledEvent {
+// Abstract base class for simulation events
+struct SimEventBase {
     int sim_time;
-    std::coroutine_handle<> handle;
+    virtual void resume() = 0;
+    virtual ~SimEventBase() = default;
+};
 
-    bool operator>(const ScheduledEvent& other) const {
-        return sim_time > other.sim_time;
+// Concrete event for coroutine handles
+struct CoroutineEvent : SimEventBase {
+    std::coroutine_handle<> handle;
+    CoroutineEvent(int t, std::coroutine_handle<> h) {
+        sim_time = t;
+        handle = h;
+    }
+    void resume() override {
+        handle.resume();
     }
 };
 
+struct CompareSimEvent {
+    bool operator()(const SimEventBase* a, const SimEventBase* b) {
+        return a->sim_time > b->sim_time;
+    }
+};
 
-std::priority_queue<ScheduledEvent, std::vector<ScheduledEvent>, std::greater<>> event_queue;
+std::priority_queue<SimEventBase*, std::vector<SimEventBase*>, CompareSimEvent> event_queue;
 
 struct SimDelay {
     int wake_time;
@@ -29,7 +43,7 @@ struct SimDelay {
     bool await_ready() const noexcept { return false; }
 
     void await_suspend(std::coroutine_handle<> h) const {
-        event_queue.push({wake_time, h});
+        event_queue.push(new CoroutineEvent(wake_time, h));
     }
 
     void await_resume() const noexcept {}
@@ -38,7 +52,7 @@ struct SimDelay {
 
 
 
-struct SimEvent {
+struct SimEvent : SimEventBase {
     std::vector<std::coroutine_handle<>> waiters;
     std::variant<std::monostate, int, std::string> value;
 
@@ -67,9 +81,13 @@ struct SimEvent {
 
     void trigger(int time) {
         for (auto h : waiters) {
-            event_queue.push({time, h});
+            event_queue.push(new CoroutineEvent(time, h));
         }
         waiters.clear();
+    }
+
+    void resume() override {
+        trigger(sim_time);
     }
 };
 
@@ -121,23 +139,22 @@ Task trigger_process(SimEvent& e) {
 int main() {
     SimEvent shared_event;
 
-
     auto ta = processA(shared_event);
     auto tb = processB(shared_event);
     auto tc = trigger_process(shared_event);
 
     // Manually enqueue initial coroutine entries
-    event_queue.push({0, tc.h});
-    event_queue.push({0, ta.h});
-    event_queue.push({0, tb.h});
-
+    event_queue.push(new CoroutineEvent(0, tc.h));
+    event_queue.push(new CoroutineEvent(0, ta.h));
+    event_queue.push(new CoroutineEvent(0, tb.h));
 
     while (!event_queue.empty()) {
-        auto ev = event_queue.top();
+        SimEventBase* ev = event_queue.top();
         event_queue.pop();
 
-        sim_time = ev.sim_time;
-        ev.handle.resume();  // resume the coroutine, which may enqueue again
+        sim_time = ev->sim_time;
+        ev->resume();  // resume the coroutine, which may enqueue again
+        delete ev;
     }
 
     return 0;
