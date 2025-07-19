@@ -19,9 +19,11 @@ struct SimEventBase {
 // Concrete event for coroutine handles
 struct CoroutineEvent : SimEventBase {
     std::coroutine_handle<> handle;
-    CoroutineEvent(int t, std::coroutine_handle<> h) {
+    std::string label;
+
+    CoroutineEvent(int t, std::coroutine_handle<> h, std::string lbl)
+        : handle(h), label(std::move(lbl)) {
         sim_time = t;
-        handle = h;
     }
     void resume() override {
         handle.resume();
@@ -36,6 +38,34 @@ struct CompareSimEvent {
 
 std::priority_queue<SimEventBase*, std::vector<SimEventBase*>, CompareSimEvent> event_queue;
 
+void print_event_queue_state() {
+    std::vector<SimEventBase*> temp;
+
+    std::cout << "🪄 Event Queue @ time " << sim_time << ":\n";
+
+    // Temporarily pop elements to inspect
+    while (!event_queue.empty()) {
+        auto e = event_queue.top();
+        event_queue.pop();
+        std::cout << "  - Scheduled at: " << e->sim_time;
+        if (auto ce = dynamic_cast<CoroutineEvent*>(e)) {
+            std::cout << " [Coroutine: " << ce->label << "]";
+        } else {
+            std::cout << " (" << typeid(*e).name() << ")";
+        }
+        std::cout << "\n";
+        temp.push_back(e);
+    }
+
+    // Restore the queue
+    for (auto* e : temp) {
+        event_queue.push(e);
+    }
+}
+
+
+
+
 struct SimDelay {
     int wake_time;
     SimDelay(int delay) : wake_time(sim_time + delay) {}
@@ -43,7 +73,7 @@ struct SimDelay {
     bool await_ready() const noexcept { return false; }
 
     void await_suspend(std::coroutine_handle<> h) const {
-        event_queue.push(new CoroutineEvent(wake_time, h));
+        event_queue.push(new CoroutineEvent(wake_time, h, "SimDelay"));
     }
 
     void await_resume() const noexcept {}
@@ -53,13 +83,13 @@ struct SimDelay {
 
 
 struct SimEvent : SimEventBase {
-    std::vector<std::coroutine_handle<>> waiters;
+    std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
     std::variant<std::monostate, int, std::string> value;
 
     bool await_ready() const noexcept { return false; }
 
-    void await_suspend(std::coroutine_handle<> h) {
-        waiters.push_back(h);  // allow multiple waiters
+    void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
+        waiters.emplace_back(h, label);  // allow multiple waiters with labels
     }
 
     auto await_resume() const {
@@ -80,8 +110,9 @@ struct SimEvent : SimEventBase {
     }
 
     void trigger(int time) {
-        for (auto h : waiters) {
-            event_queue.push(new CoroutineEvent(time, h));
+        for (size_t i = 0; i < waiters.size(); ++i) {
+            const auto& [h, label] = waiters[i];
+            event_queue.push(new CoroutineEvent(time, h, "SimEvent::trigger -> " + label));
         }
         waiters.clear();
     }
@@ -114,16 +145,25 @@ Task TaskPromise::get_return_object() {
     return Task{std::coroutine_handle<TaskPromise>::from_promise(*this)};
 }
 
+struct LabeledAwait {
+    SimEvent& ev;
+    std::string label;
+
+    bool await_ready() noexcept { return false; }
+    void await_suspend(std::coroutine_handle<> h) { ev.await_suspend(h, label); }
+    auto await_resume() { return ev.await_resume(); }
+};
+
 // The coroutine process that we’ll start via event queue
 Task processA(SimEvent& e) {
     std::cout << "[" << sim_time << "] processA waiting...\n";
-    auto val = co_await e;
+    auto val = co_await LabeledAwait{e, "processA"};
     std::cout << "[" << sim_time << "] processA resumed with: " << std::get<std::string>(val) << "\n";
 }
 
 Task processB(SimEvent& e) {
     std::cout << "[" << sim_time << "] processB waiting...\n";
-    auto val = co_await e;
+    auto val = co_await LabeledAwait{e, "processB"};
     std::cout << "[" << sim_time << "] processB resumed with: " << std::get<std::string>(val) << "\n";
 }
 
@@ -144,11 +184,13 @@ int main() {
     auto tc = trigger_process(shared_event);
 
     // Manually enqueue initial coroutine entries
-    event_queue.push(new CoroutineEvent(0, tc.h));
-    event_queue.push(new CoroutineEvent(0, ta.h));
-    event_queue.push(new CoroutineEvent(0, tb.h));
+    event_queue.push(new CoroutineEvent(0, tc.h, "trigger_process"));
+    event_queue.push(new CoroutineEvent(0, ta.h, "processA"));
+    event_queue.push(new CoroutineEvent(0, tb.h, "processB"));
 
     while (!event_queue.empty()) {
+        print_event_queue_state();  // 🔍 Print before processing
+
         SimEventBase* ev = event_queue.top();
         event_queue.pop();
 
