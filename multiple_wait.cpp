@@ -4,6 +4,7 @@
 #include <queue>
 #include <variant>
 #include <string>
+#include <type_traits>
 
 int sim_time = 0;
 
@@ -53,6 +54,14 @@ struct SimEvent {
 
     template<typename T>
     void set_value(T val) {
+        static_assert(
+            std::disjunction_v<
+                std::is_same<T, int>,
+                std::is_same<T, std::string>
+            >,
+            "SimEvent::set_value() only accepts int or std::string"
+        );
+
         value = val;
     }
 
@@ -105,12 +114,13 @@ Task trigger_process(SimEvent& e) {
     co_await SimDelay(5);
     std::cout << "[" << sim_time << "] trigger_process scheduling trigger...\n";
     e.trigger(sim_time);
+    e.set_value(std::string("done"));
     co_return;
 }
 
 int main() {
     SimEvent shared_event;
-    shared_event.set_value(std::string("done"));
+
 
     auto ta = processA(shared_event);
     auto tb = processB(shared_event);
