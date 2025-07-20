@@ -80,6 +80,134 @@ struct SimDelay {
 };
 
 
+struct ContainerBase {
+    virtual void put(int value) = 0;
+    virtual bool can_get(int value) const = 0;
+    virtual void get(int value) = 0;
+    virtual ~ContainerBase() = default;
+};
+
+
+struct Resource : ContainerBase {
+    int level = 0;
+    int capacity;
+    std::vector<std::pair<std::coroutine_handle<>, int>> get_waiters;
+    std::vector<std::pair<std::coroutine_handle<>, int>> put_waiters;
+
+    Resource(int cap) : capacity(cap) {}
+
+    bool can_put(int value) const {
+        return level + value <= capacity;
+    }
+    bool can_get(int value) const override {
+        return level >= value;
+    }
+
+    void await_get(std::coroutine_handle<> h, int value) {
+        get_waiters.emplace_back(h, value);
+    }
+
+    void await_put(std::coroutine_handle<> h, int value) {
+        put_waiters.emplace_back(h, value);
+    }
+
+    void try_wake_get_waiters() {
+        std::cout << "🔍 Get Waiters (before trying):\n";
+        for (const auto& [h, v] : get_waiters) {
+            std::cout << "  - wants: " << v << "\n";
+        }
+        for (size_t i = 0; i < get_waiters.size();) {
+            auto [h, v] = get_waiters[i];
+            if (can_get(v)) {
+                std::cout << "  - try get : " << v << "\t"<<"level b4:"<<level<<"\n";
+                level -= v;
+                std::cout << "  - tre get : " << v << "\t"<<"level after:"<<level<<"\n";
+                event_queue.push(new CoroutineProcess(sim_time, h, "Resource::resume get"));
+
+                get_waiters.erase(get_waiters.begin() + i);
+            } else {
+                ++i;
+            }
+        }
+    }
+
+    void try_wake_put_waiters() {
+        std::cout << "🔍 Put Waiters (before trying):\n";
+        for (const auto& [h, v] : put_waiters) {
+            std::cout << "  - wants to put: " << v << "\n";
+        }
+        for (size_t i = 0; i < put_waiters.size();) {
+            auto [h, v] = put_waiters[i];
+            if (can_put(v)) {
+                level += v;
+                event_queue.push(new CoroutineProcess(sim_time, h, "Resource::resume put"));
+                put_waiters.erase(put_waiters.begin() + i);
+            } else {
+                ++i;
+            }
+        }
+    }
+
+    void put(int value) override {
+        if (can_put(value)) {
+            std::cout << "  - put : " << value << "\t"<<"level before :"<<level<<"\n";
+            level += value;
+            std::cout << "  - put : " << value << "\t"<<"level  after:"<<level<<"\n";
+            try_wake_get_waiters();  // notify get waiters
+        } else {
+            // Queue if over capacity, assume caller will suspend
+        }
+    }
+
+    void get(int value) override {
+        std::cout << "  - get : " << value << "\t"<<"level :"<<level<<"\n";
+        level -= value;
+        try_wake_put_waiters();  // notify put waiters
+    }
+};
+
+
+
+struct ResourcePutEvent {
+    Resource& resource;
+    int value;
+
+    ResourcePutEvent(Resource& r, int v) : resource(r), value(v) {}
+
+    bool await_ready() const noexcept {
+        return false;
+    }
+
+    void await_suspend(std::coroutine_handle<> h) const {
+        resource.await_put(h, value);
+        resource.try_wake_put_waiters();
+    }
+
+    void await_resume() const noexcept {
+        resource.try_wake_get_waiters();
+    }
+};
+
+struct ResourceGetEvent {
+    Resource& resource;
+    int value;
+
+    ResourceGetEvent(Resource& r, int v) : resource(r), value(v) {}
+
+    bool await_ready() const noexcept {
+        return false;
+    }
+
+    void await_suspend(std::coroutine_handle<> h) const {
+        resource.await_get(h, value);
+        resource.try_wake_get_waiters();  // try to fulfill get immediately
+    }
+
+    void await_resume() const noexcept {
+        resource.try_wake_put_waiters();
+    }
+};
+
 
 
 struct SimEvent : SimEventBase {
@@ -121,6 +249,7 @@ struct SimEvent : SimEventBase {
         trigger(sim_time);
     }
 };
+
 
 // Coroutine type
 struct Task;
@@ -202,6 +331,34 @@ Task trigger_process(SimEvent& e) {
     co_return;
 }
 
+Resource test_resource(15);
+
+
+Task test_put_first() {
+    co_await SimDelay(5);  // wait 5 units
+    std::cout << "[" << sim_time << "] test_put_first: putting 4\n";
+    co_await ResourcePutEvent(test_resource, 4);
+    std::cout << "[" << sim_time << "] test_put_first: done\n";
+
+    co_await SimDelay(5);  // wait 5 units
+    std::cout << "[" << sim_time << "] test_put_first: putting 10\n";
+    co_await ResourcePutEvent(test_resource, 10);
+    std::cout << "[" << sim_time << "] test_put_first: done\n";
+}
+
+Task test_get_second() {
+    co_await SimDelay(6);  // wait 5 units
+    std::cout << "[" << sim_time << "] test_get_second: trying to get 3"<< " current level  "<<test_resource.level << std::endl;;
+    co_await ResourceGetEvent(test_resource, 3);
+    std::cout << "[" << sim_time << "] test_get_second: got 3"<< " current level  "<<test_resource.level << std::endl;;
+
+    std::cout << "[" << sim_time << "] test_get_second: trying to get 9"<< " current level  "<<test_resource.level << std::endl;
+    co_await ResourceGetEvent(test_resource, 9);
+    std::cout << "[" << sim_time << "] test_get_second: got 9" << " current level  "<<test_resource.level << std::endl;
+}
+
+
+
 int main() {
     SimEvent shared_event;
 
@@ -210,11 +367,16 @@ int main() {
     auto tb = processB(ts);
     auto tt = trigger_process(shared_event);
 
+    auto tput = test_put_first();
+    auto tget = test_get_second();
+
     // Manually enqueue initial coroutine entries
-    event_queue.push(new CoroutineProcess(0, ta.h, "processA"));
-    event_queue.push(new CoroutineProcess(0, tb.h, "processB"));
-    event_queue.push(new CoroutineProcess(0, ts.h, "sub_process"));
-    event_queue.push(new CoroutineProcess(0, tt.h, "trigger_process"));
+   // event_queue.push(new CoroutineProcess(0, ta.h, "processA"));
+    //event_queue.push(new CoroutineProcess(0, tb.h, "processB"));
+    //event_queue.push(new CoroutineProcess(0, ts.h, "sub_process"));
+    //event_queue.push(new CoroutineProcess(0, tt.h, "trigger_process"));
+    event_queue.push(new CoroutineProcess(0, tput.h, "test_put_first"));
+    event_queue.push(new CoroutineProcess(0, tget.h, "test_get_second"));
 
     while (!event_queue.empty()) {
         //print_event_queue_state();  // 🔍 Print before processing
@@ -226,6 +388,8 @@ int main() {
         ev->resume();  // resume the coroutine, which may enqueue again
         delete ev;
     }
+
+
 
     return 0;
 }
