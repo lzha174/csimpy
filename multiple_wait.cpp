@@ -1,3 +1,4 @@
+constexpr bool DEBUG_RESOURCE = false;
 // Awaitable for simulating a timed delay
 #include <iostream>
 #include <coroutine>
@@ -93,8 +94,9 @@ struct Resource : ContainerBase {
     int capacity;
     std::vector<std::pair<std::coroutine_handle<>, int>> get_waiters;
     std::vector<std::pair<std::coroutine_handle<>, int>> put_waiters;
+    std::string name;
 
-    Resource(int cap) : capacity(cap) {}
+    Resource(int cap, std::string n = "") : capacity(cap), name(std::move(n)) {}
 
     bool can_put(int value) const {
         return level + value <= capacity;
@@ -112,16 +114,22 @@ struct Resource : ContainerBase {
     }
 
     void try_wake_get_waiters() {
-        std::cout << "🔍 Get Waiters (before trying):\n";
-        for (const auto& [h, v] : get_waiters) {
-            std::cout << "  - wants: " << v << "\n";
+        if (DEBUG_RESOURCE) {
+            std::cout << "[" << name << "] 🔍 Get Waiters (before trying):\n";
+            for (const auto& [h, v] : get_waiters) {
+                std::cout << "[" << name << "]   - wants: " << v << "\n";
+            }
         }
         for (size_t i = 0; i < get_waiters.size();) {
             auto [h, v] = get_waiters[i];
             if (can_get(v)) {
-                std::cout << "  - try get : " << v << "\t"<<"level b4:"<<level<<"\n";
+                if (DEBUG_RESOURCE) {
+                    std::cout << "[" << name << "]   - try get : " << v << "\t"<<"level b4:"<<level<<"\n";
+                }
                 level -= v;
-                std::cout << "  - tre get : " << v << "\t"<<"level after:"<<level<<"\n";
+                if (DEBUG_RESOURCE) {
+                    std::cout << "[" << name << "]   - tre get : " << v << "\t"<<"level after:"<<level<<"\n";
+                }
                 event_queue.push(new CoroutineProcess(sim_time, h, "Resource::resume get"));
 
                 get_waiters.erase(get_waiters.begin() + i);
@@ -132,9 +140,11 @@ struct Resource : ContainerBase {
     }
 
     void try_wake_put_waiters() {
-        std::cout << "🔍 Put Waiters (before trying):\n";
-        for (const auto& [h, v] : put_waiters) {
-            std::cout << "  - wants to put: " << v << "\n";
+        if (DEBUG_RESOURCE) {
+            std::cout << "[" << name << "] 🔍 Put Waiters (before trying):\n";
+            for (const auto& [h, v] : put_waiters) {
+                std::cout << "[" << name << "]   - wants to put: " << v << "\n";
+            }
         }
         for (size_t i = 0; i < put_waiters.size();) {
             auto [h, v] = put_waiters[i];
@@ -150,9 +160,13 @@ struct Resource : ContainerBase {
 
     void put(int value) override {
         if (can_put(value)) {
-            std::cout << "  - put : " << value << "\t"<<"level before :"<<level<<"\n";
+            if (DEBUG_RESOURCE) {
+                std::cout << "[" << name << "]   - put : " << value << "\t"<<"level before :" << level << "\n";
+            }
             level += value;
-            std::cout << "  - put : " << value << "\t"<<"level  after:"<<level<<"\n";
+            if (DEBUG_RESOURCE) {
+                std::cout << "[" << name << "]   - put : " << value << "\t"<<"level  after:" << level << "\n";
+            }
             try_wake_get_waiters();  // notify get waiters
         } else {
             // Queue if over capacity, assume caller will suspend
@@ -160,7 +174,9 @@ struct Resource : ContainerBase {
     }
 
     void get(int value) override {
-        std::cout << "  - get : " << value << "\t"<<"level :"<<level<<"\n";
+        if (DEBUG_RESOURCE) {
+            std::cout << "[" << name << "]   - get : " << value << "\t"<<"level :" << level << "\n";
+        }
         level -= value;
         try_wake_put_waiters();  // notify put waiters
     }
@@ -331,7 +347,7 @@ Task trigger_process(SimEvent& e) {
     co_return;
 }
 
-Resource test_resource(15);
+Resource test_resource(15, "test_resource");
 
 
 Task test_put_first() {
