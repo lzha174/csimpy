@@ -150,12 +150,12 @@ struct Task {
 
 
 struct LabeledAwait {
-    SimEvent& ev;
+    SimEvent& event;
     std::string label;
 
     bool await_ready() noexcept { return false; }
-    void await_suspend(std::coroutine_handle<> h) { ev.await_suspend(h, label); }
-    auto await_resume() { return ev.await_resume(); }
+    void await_suspend(std::coroutine_handle<> h) { event.await_suspend(h, label); }
+    auto await_resume() { return event.await_resume(); }
 };
 
 
