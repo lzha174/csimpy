@@ -89,14 +89,14 @@ struct ContainerBase {
 };
 
 
-struct Resource : ContainerBase {
+struct Container : ContainerBase {
     int level = 0;
     int capacity;
     std::vector<std::pair<std::coroutine_handle<>, int>> get_waiters;
     std::vector<std::pair<std::coroutine_handle<>, int>> put_waiters;
     std::string name;
 
-    Resource(int cap, std::string n = "") : capacity(cap), name(std::move(n)) {}
+    Container(int cap, std::string n = "") : capacity(cap), name(std::move(n)) {}
 
     bool can_put(int value) const {
         return level + value <= capacity;
@@ -130,7 +130,7 @@ struct Resource : ContainerBase {
                 if (DEBUG_RESOURCE) {
                     std::cout << "[" << name << "]   - tre get : " << v << "\t"<<"level after:"<<level<<"\n";
                 }
-                event_queue.push(new CoroutineProcess(sim_time, h, "Resource::resume get"));
+                event_queue.push(new CoroutineProcess(sim_time, h, "Container::resume get"));
 
                 get_waiters.erase(get_waiters.begin() + i);
             } else {
@@ -150,7 +150,7 @@ struct Resource : ContainerBase {
             auto [h, v] = put_waiters[i];
             if (can_put(v)) {
                 level += v;
-                event_queue.push(new CoroutineProcess(sim_time, h, "Resource::resume put"));
+                event_queue.push(new CoroutineProcess(sim_time, h, "Container::resume put"));
                 put_waiters.erase(put_waiters.begin() + i);
             } else {
                 ++i;
@@ -184,43 +184,43 @@ struct Resource : ContainerBase {
 
 
 
-struct ResourcePutEvent {
-    Resource& resource;
+struct ContainerPutEvent {
+    Container& container;
     int value;
 
-    ResourcePutEvent(Resource& r, int v) : resource(r), value(v) {}
+    ContainerPutEvent(Container& c, int v) : container(c), value(v) {}
 
     bool await_ready() const noexcept {
         return false;
     }
 
     void await_suspend(std::coroutine_handle<> h) const {
-        resource.await_put(h, value);
-        resource.try_wake_put_waiters();
+        container.await_put(h, value);
+        container.try_wake_put_waiters();
     }
 
     void await_resume() const noexcept {
-        resource.try_wake_get_waiters();
+        container.try_wake_get_waiters();
     }
 };
 
-struct ResourceGetEvent {
-    Resource& resource;
+struct ContainerGetEvent {
+    Container& container;
     int value;
 
-    ResourceGetEvent(Resource& r, int v) : resource(r), value(v) {}
+    ContainerGetEvent(Container& c, int v) : container(c), value(v) {}
 
     bool await_ready() const noexcept {
         return false;
     }
 
     void await_suspend(std::coroutine_handle<> h) const {
-        resource.await_get(h, value);
-        resource.try_wake_get_waiters();  // try to fulfill get immediately
+        container.await_get(h, value);
+        container.try_wake_get_waiters();  // try to fulfill get immediately
     }
 
     void await_resume() const noexcept {
-        resource.try_wake_put_waiters();
+        container.try_wake_put_waiters();
     }
 };
 
@@ -347,30 +347,30 @@ Task trigger_process(SimEvent& e) {
     co_return;
 }
 
-Resource test_resource(15, "test_resource");
+Container test_container(15, "test_container");
 
 
 Task test_put_first() {
     co_await SimDelay(5);  // wait 5 units
     std::cout << "[" << sim_time << "] test_put_first: putting 4\n";
-    co_await ResourcePutEvent(test_resource, 4);
+    co_await ContainerPutEvent(test_container, 4);
     std::cout << "[" << sim_time << "] test_put_first: done\n";
 
     co_await SimDelay(5);  // wait 5 units
     std::cout << "[" << sim_time << "] test_put_first: putting 10\n";
-    co_await ResourcePutEvent(test_resource, 10);
+    co_await ContainerPutEvent(test_container, 10);
     std::cout << "[" << sim_time << "] test_put_first: done\n";
 }
 
 Task test_get_second() {
     co_await SimDelay(6);  // wait 5 units
-    std::cout << "[" << sim_time << "] test_get_second: trying to get 3"<< " current level  "<<test_resource.level << std::endl;;
-    co_await ResourceGetEvent(test_resource, 3);
-    std::cout << "[" << sim_time << "] test_get_second: got 3"<< " current level  "<<test_resource.level << std::endl;;
+    std::cout << "[" << sim_time << "] test_get_second: trying to get 3"<< " current level  "<<test_container.level << std::endl;;
+    co_await ContainerGetEvent(test_container, 3);
+    std::cout << "[" << sim_time << "] test_get_second: got 3"<< " current level  "<<test_container.level << std::endl;;
 
-    std::cout << "[" << sim_time << "] test_get_second: trying to get 9"<< " current level  "<<test_resource.level << std::endl;
-    co_await ResourceGetEvent(test_resource, 9);
-    std::cout << "[" << sim_time << "] test_get_second: got 9" << " current level  "<<test_resource.level << std::endl;
+    std::cout << "[" << sim_time << "] test_get_second: trying to get 9"<< " current level  "<<test_container.level << std::endl;
+    co_await ContainerGetEvent(test_container, 9);
+    std::cout << "[" << sim_time << "] test_get_second: got 9" << " current level  "<<test_container.level << std::endl;
 }
 
 

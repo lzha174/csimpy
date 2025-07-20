@@ -94,18 +94,6 @@ struct SimEvent : SimEventBase {
 
 
 
-
-// Coroutine type
-
-// Abstract base class for simulation events
-
-
-
-
-
-
-
-
 inline thread_local CSimpyEnv* current_env = nullptr;
 
 struct TaskPromise {
