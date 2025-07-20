@@ -74,5 +74,6 @@ void example_2() {
 }
 int main() {
     example_1();
+    example_2();
     return 0;
 }
