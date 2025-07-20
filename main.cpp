@@ -1,79 +1,44 @@
+#include "csimpy_env.h"
+#include "csimpy_delay.h"
 #include <iostream>
-#include <coroutine>
-#include <queue>
-#include <variant>
-#include <string>
 
-int sim_time = 0;
+CSimpyEnv env;
 
-struct ScheduledEvent {
-    int sim_time;
-    std::coroutine_handle<> handle;
 
-    bool operator>(const ScheduledEvent& other) const {
-        return sim_time > other.sim_time;
-    }
-};
+void example_1() {
 
-std::priority_queue<ScheduledEvent, std::vector<ScheduledEvent>, std::greater<>> event_queue;
+    Task proc_c = env.create_task([]() -> Task {
+        std::cout << "[" << env.sim_time << "] process_c started\n";
+        co_await SimDelay(env, 15);
+        std::cout << "[" << env.sim_time << "] process_c finished\n";
+    });
 
-// --- Awaitable SimEvent ---
-struct SimEvent {
-    int scheduled_time;
-    std::coroutine_handle<> handle = nullptr;
-    std::variant<std::monostate, int, std::string> value;
+    Task proc_a = env.create_task([&proc_c]() -> Task {
+       std::cout << "[" << env.sim_time << "] process_a started\n";
+       co_await SimDelay(env, 5);
+       std::cout << "[" << env.sim_time << "] process_a now waiting on process_c\n";
+       co_await LabeledAwait{proc_c.get_completion_event(), "process_a"};
+       std::cout << "[" << env.sim_time << "] process_a resumed after process_c\n";
+   });
 
-    SimEvent(int when) : scheduled_time(when) {}
+    Task proc_b = env.create_task([&proc_c]() -> Task {
+       std::cout << "[" << env.sim_time << "] process_b started\n";
+       co_await SimDelay(env, 10);
+       std::cout << "[" << env.sim_time << "] process_b now waiting on process_c\n";
+       co_await LabeledAwait{proc_c.get_completion_event(), "process_b"};
+       std::cout << "[" << env.sim_time << "] process_b resumed after process_c\n";
+   });
 
-    bool await_ready() const noexcept { return false; }
+    env.schedule(proc_c, "process_c");
+    env.schedule(proc_b, "process_b");
+    env.schedule(proc_a, "process_a");
 
-    void await_suspend(std::coroutine_handle<> h) {
-        handle = h;
-        event_queue.push({scheduled_time, h});
-    }
 
-    auto await_resume() const {
-        return value;
-    }
 
-    template<typename T>
-    void set_value(T val) {
-        value = val;
-    }
-};
-
-// --- Coroutine that waits on SimEvent ---
-struct Task {
-    struct promise_type {
-        Task get_return_object() { return {}; }
-        std::suspend_never initial_suspend() { return {}; }
-        std::suspend_never final_suspend() noexcept { return {}; }
-        void return_void() {}
-        void unhandled_exception() { std::exit(1); }
-    };
-};
-
-// --- Generator-like coroutine ---
-Task process() {
-    std::cout << "[" << sim_time << "] Start process\n";
-
-    SimEvent ev1(5);  // schedule to resume at time = 5
-    ev1.set_value(std::string("hello"));
-
-    auto result = co_await ev1;
-    std::cout << "[" << sim_time << "] Resumed with: " << std::get<std::string>(result) << "\n";
+    env.run();
 }
 
 int main() {
-    process();  // start coroutine
-
-    while (!event_queue.empty()) {
-        auto ev = event_queue.top();
-        event_queue.pop();
-
-        sim_time = ev.sim_time;
-        ev.handle.resume();  // this may push more events
-    }
-
+    example_1();
     return 0;
 }

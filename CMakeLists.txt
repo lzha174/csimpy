@@ -3,4 +3,9 @@ project(untitled1)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(untitled1 multiple_wait.cpp)
+
+add_executable(untitled1
+        main.cpp
+        csimpy_env.cpp
+        csimpy_delay.cpp
+)
