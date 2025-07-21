@@ -2,11 +2,13 @@
 #include <queue>
 #include <coroutine>
 #include <functional>
+#include <iostream>
 #include <string>
 
 #include "csimpy_env.h"
 
 
+struct AllOfEvent;
 struct CompareSimEvent;
 struct CoroutineProcess;
 class SimEvent;
@@ -51,16 +53,18 @@ struct CoroutineProcess : SimEventBase {
 };
 
 struct SimEvent : SimEventBase {
-    std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
     std::variant<std::monostate, int, std::string> value;
     CSimpyEnv& env;
+    std::vector<std::function<void(int)>> callbacks;
 
     SimEvent(CSimpyEnv& env_) : env(env_) {}
 
     bool await_ready() const noexcept { return false; }
 
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
-        waiters.emplace_back(h, label);  // allow multiple waiters with labels
+        callbacks.emplace_back([this, h, label](int time) {
+            env.schedule(new CoroutineProcess(time, h, "SimEvent::callback -> " + label));
+        });
     }
 
     auto await_resume() const {
@@ -80,10 +84,10 @@ struct SimEvent : SimEventBase {
     }
 
     void trigger(int time) {
-        for (const auto& [h, label] : waiters) {
-            env.schedule(new CoroutineProcess(time, h, "SimEvent::trigger -> " + label));
+        for (auto& cb : callbacks) {
+            cb(time);
         }
-        waiters.clear();
+        callbacks.clear();
     }
 
     void resume() override {
@@ -149,6 +153,7 @@ struct Task {
 
 
 
+
 struct LabeledAwait {
     SimEvent& event;
     std::string label;
@@ -158,4 +163,78 @@ struct LabeledAwait {
     auto await_resume() { return event.await_resume(); }
 };
 
+struct SimDelay : SimEvent {
+    SimDelay(CSimpyEnv& e, int delay)
+        : SimEvent(e) {
+        sim_time = e.sim_time + delay;
+    }
 
+    // schedule a heap-allocated copy, not `this`
+    void await_suspend(std::coroutine_handle<> h,
+                       const std::string& label = "?") {
+        // store the coroutine-resumption callback
+        callbacks.emplace_back([this, h, label](int when) {
+            env.schedule(new CoroutineProcess(
+                when, h, "SimDelay::trigger -> " + label));
+        });
+
+        // ----- clone onto heap using smart pointer -----
+        int remaining = sim_time - env.sim_time;          // delay left
+        auto heapDelay = std::make_unique<SimDelay>(env, remaining);   // smart pointer
+        heapDelay->callbacks = std::move(callbacks);      // move callbacks
+        callbacks.clear();                                // (optional)
+
+        env.schedule(heapDelay.release());   // release raw pointer to pass to schedule
+    }
+
+    void resume() override {
+        std::cout << "[" << env.sim_time << "] SimDelay resumed.\n";
+        trigger(sim_time);   // execute stored callbacks
+    }
+};
+// Waits for all of a set of SimEvents to complete, then triggers itself.
+struct AllOfEvent : SimEventBase {
+    std::vector<SimEvent*> events;
+    std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
+    int completed = 0;
+    CSimpyEnv& env;
+
+    AllOfEvent(CSimpyEnv& env_, std::vector<SimEvent*> evts) : events(std::move(evts)), env(env_) {
+        // Removed lambda trampoline and heap-allocated fake awaiters from constructor
+    }
+
+    void count(int time) {
+        ++completed;
+        if (completed == static_cast<int>(events.size())) {
+            // Schedule this AllOfEvent itself (heap-allocated)
+            auto self = new AllOfEvent(env, events);  // note: shallow copy of `events`
+            self->waiters = std::move(waiters);       // transfer ownership of waiters
+            self->sim_time = time;                    // assign the current time
+            env.schedule(self);
+        }
+    }
+
+    bool await_ready() const noexcept { return false; }
+
+    void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
+        waiters.emplace_back(h, label);
+        for (SimEvent* e : events) {
+            e->await_suspend(std::noop_coroutine(), "AllOfEvent::" + label);
+            e->callbacks.emplace_back([this](int t) {
+                this->count(t);
+            });
+        }
+    }
+
+    auto await_resume() const {
+        return std::string("all_done");
+    }
+
+    void resume() override {
+        for (const auto& [wh, label] : waiters) {
+            env.schedule(new CoroutineProcess(env.sim_time, wh, "AllOfEvent::resume -> " + label));
+        }
+        waiters.clear();
+
+    }
+};

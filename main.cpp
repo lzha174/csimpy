@@ -72,8 +72,25 @@ void example_2() {
     env.run();
 
 }
+
+
+void example_3() {
+    CSimpyEnv env;
+
+    Task proc_all_wait = env.create_task([&env]() -> Task {
+        SimEvent d1 = SimDelay(env, 5);
+        SimEvent d2 = SimDelay(env, 10);
+        co_await AllOfEvent{env, {&d1, &d2}};
+        std::cout << "[" << env.sim_time << "] All delays finished.\n";
+    });
+
+    env.schedule(proc_all_wait, "proc_all_wait");
+
+    env.run();
+}
+
 int main() {
-    example_1();
     example_2();
+    //example_2();
     return 0;
 }
