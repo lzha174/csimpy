@@ -78,9 +78,9 @@ void example_3() {
     CSimpyEnv env;
 
     Task proc_all_wait = env.create_task([&env]() -> Task {
-        auto d1 = new SimDelay(env, 5);
-        auto d2 = new SimDelay(env, 10);
-        co_await AllOfEvent{env, {d1, d2}};
+        SimDelay d1(env, 5);
+        SimDelay d2(env, 10);
+        co_await AllOfEvent{env, {&d1, &d2}};
         std::cout << "[" << env.sim_time << "] All delays finished.\n";
     });
 
@@ -89,8 +89,34 @@ void example_3() {
     env.run();
 }
 
+void example_4() {
+    CSimpyEnv env;
+
+    // Shared event
+    auto shared_event = std::make_unique<SimEvent>(env);
+
+    Task task1 = env.create_task([&env, &shared_event]() -> Task {
+        std::cout << "[" << env.sim_time << "] task1 waiting on shared_event or timeout\n";
+        auto timeout = SimDelay(env, 5);
+
+        co_await AllOfEvent{env, {&timeout, shared_event.get()}};
+        std::cout << "[" << env.sim_time << "] task1 finished waiting (timeout and event)\n";
+    });
+
+    Task task2 = env.create_task([&env, &shared_event]() -> Task {
+        co_await SimDelay(env, 10);
+        std::cout << "[" << env.sim_time << "] task2 triggering shared_event\n";
+        shared_event->trigger(env.sim_time);
+    });
+
+    env.schedule(task1, "task1");
+    env.schedule(task2, "task2");
+
+    env.run();
+}
+
 int main() {
-    example_3();
+    example_4();
     //example_2();
     return 0;
 }
