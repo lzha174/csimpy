@@ -96,6 +96,7 @@ void example_4() {
     auto shared_event = std::make_unique<SimEvent>(env);
 
     Task task1 = env.create_task([&env, &shared_event]() -> Task {
+        co_await SimDelay(env, 1);
         std::cout << "[" << env.sim_time << "] task1 waiting on shared_event or timeout\n";
         auto timeout = SimDelay(env, 5);
 

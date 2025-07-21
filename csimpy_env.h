@@ -186,7 +186,8 @@ struct SimDelay : SimEvent {
         // store the coroutine-resumption callback
         callbacks.emplace_back([this, h, label](int when) {
             env.schedule(new CoroutineProcess(
-                when, h, "SimDelay::trigger -> " + label));
+                when, h, "SimDelay::resume handler -> " + label));
+            //env.print_event_queue_state();
         });
 
         // ----- clone onto heap using smart pointer -----
@@ -241,6 +242,7 @@ struct AllOfEvent : SimEventBase {
                 heapDelay->callbacks = std::move(delay->callbacks); // transfer callbacks
                 delay->callbacks.clear();
                 env.schedule(heapDelay.release());
+
             }
         }
     }
@@ -251,7 +253,7 @@ struct AllOfEvent : SimEventBase {
 
     void resume() override {
         for (const auto& [wh, label] : waiters) {
-            env.schedule(new CoroutineProcess(env.sim_time, wh, "AllOfEvent::resume -> " + label));
+            env.schedule(new CoroutineProcess(env.sim_time, wh, "AllOfEvent::resume handler-> " + label));
         }
         waiters.clear();
 

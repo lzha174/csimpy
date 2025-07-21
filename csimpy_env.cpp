@@ -12,7 +12,7 @@ void CSimpyEnv::schedule(Task& t, const std::string& label) {
 
 void CSimpyEnv::run() {
     while (!event_queue.empty()) {
-        //print_event_queue_state();  // 🔍 Print before processing
+        print_event_queue_state();  // 🔍 Print before processing
 
         SimEventBase* ev = event_queue.top();
         event_queue.pop();
