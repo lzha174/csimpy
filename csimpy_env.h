@@ -35,6 +35,7 @@ public:
     void schedule(SimEventBase*);
     void schedule(Task&, const std::string&);
     Task create_task(std::function<Task()> coroutine_func);
+    void print_event_queue_state();
     void run();
 };
 
@@ -92,6 +93,16 @@ struct SimEvent : SimEventBase {
 
     void resume() override {
         trigger(env.sim_time);
+    }
+
+    // Schedules a heap-allocated copy of this event at the given time and clears callbacks.
+    void on_succeed(int time) {
+        auto heap_event = new SimEvent(env);
+        heap_event->value = this->value;
+        heap_event->callbacks = std::move(this->callbacks);
+        heap_event->sim_time = time;
+        this->callbacks.clear();
+        env.schedule(heap_event);
     }
 };
 

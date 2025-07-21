@@ -31,6 +31,32 @@ Task CSimpyEnv::create_task(std::function<Task()> coroutine_func) {
 }
 
 
+void CSimpyEnv::print_event_queue_state() {
+    std::vector<SimEventBase*> temp;
+
+    std::cout << "🪄 Event Queue @ time " << sim_time << ":\n";
+
+    // Temporarily pop elements to inspect
+    while (!event_queue.empty()) {
+        auto e = event_queue.top();
+        event_queue.pop();
+        std::cout << "  - Scheduled at: " << e->sim_time;
+        if (auto ce = dynamic_cast<CoroutineProcess*>(e)) {
+            std::cout << " [Coroutine: " << ce->label << "]";
+        } else {
+            std::cout << " (" << typeid(*e).name() << ")";
+        }
+        std::cout << "\n";
+        temp.push_back(e);
+    }
+
+    // Restore the queue
+    for (auto* e : temp) {
+        event_queue.push(e);
+    }
+}
+
+
 Task TaskPromise::get_return_object() {
     return Task{std::coroutine_handle<TaskPromise>::from_promise(*this)};
 }

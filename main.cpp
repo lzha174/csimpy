@@ -106,7 +106,7 @@ void example_4() {
     Task task2 = env.create_task([&env, &shared_event]() -> Task {
         co_await SimDelay(env, 10);
         std::cout << "[" << env.sim_time << "] task2 triggering shared_event\n";
-        shared_event->trigger(env.sim_time);
+        shared_event->on_succeed(env.sim_time);
     });
 
     env.schedule(task1, "task1");
