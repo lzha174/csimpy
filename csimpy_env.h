@@ -219,10 +219,18 @@ struct AllOfEvent : SimEventBase {
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         waiters.emplace_back(h, label);
         for (SimEvent* e : events) {
-            e->await_suspend(std::noop_coroutine(), "AllOfEvent::" + label);
             e->callbacks.emplace_back([this](int t) {
                 this->count(t);
             });
+
+            if (auto* delay = dynamic_cast<SimDelay*>(e)) {
+                // Force scheduling of delay event on the heap if it hasn’t been already
+                int remaining = delay->sim_time - env.sim_time;
+                auto heapDelay = std::make_unique<SimDelay>(env, remaining);
+                heapDelay->callbacks = std::move(delay->callbacks); // transfer callbacks
+                delay->callbacks.clear();
+                env.schedule(heapDelay.release());
+            }
         }
     }
 

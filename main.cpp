@@ -78,9 +78,9 @@ void example_3() {
     CSimpyEnv env;
 
     Task proc_all_wait = env.create_task([&env]() -> Task {
-        SimEvent d1 = SimDelay(env, 5);
-        SimEvent d2 = SimDelay(env, 10);
-        co_await AllOfEvent{env, {&d1, &d2}};
+        auto d1 = new SimDelay(env, 5);
+        auto d2 = new SimDelay(env, 10);
+        co_await AllOfEvent{env, {d1, d2}};
         std::cout << "[" << env.sim_time << "] All delays finished.\n";
     });
 
@@ -90,7 +90,7 @@ void example_3() {
 }
 
 int main() {
-    example_2();
+    example_3();
     //example_2();
     return 0;
 }
