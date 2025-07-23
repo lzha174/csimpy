@@ -1,0 +1,56 @@
+# Doxyfile 1.9.8 - Generated for csimpy project
+
+# Project
+PROJECT_NAME           = "csimpy"
+OUTPUT_DIRECTORY       = docs
+INPUT                  = .
+RECURSIVE              = YES
+FILE_PATTERNS          = *.cpp *.h
+EXCLUDE                =
+EXCLUDE_PATTERNS       =
+EXCLUDE_SYMLINKS       = NO
+
+# Build
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_ANON_NSPACES   = YES
+
+# Diagrams
+HAVE_DOT               = YES
+DOT_PATH               = /opt/homebrew/bin
+DOT_IMAGE_FORMAT       = svg
+CLASS_DIAGRAMS         = YES
+UML_LOOK               = YES
+COLLABORATION_GRAPH    = YES
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+INTERACTIVE_SVG        = YES
+
+# HTML output
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+HTML_COLORSTYLE_HUE    = 220
+HTML_COLORSTYLE_SAT    = 100
+HTML_COLORSTYLE_GAMMA  = 80
+HTML_TIMESTAMP         = YES
+
+# LaTeX (disabled)
+GENERATE_LATEX         = NO
+
+# Warnings
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+
+# Misc
+QUIET                  = NO
+WARNINGS               = YES
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+SEARCHENGINE           = YES

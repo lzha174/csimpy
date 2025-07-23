@@ -108,10 +108,54 @@ void example_4() {
     env.run();
 }
 
+// Example: Patient flow simulation
+void example_patient_flow() {
+    // Task: Register (10 time units)
+    Task register_task = env.create_task([]() -> Task {
+        std::cout << "[" << env.sim_time << "] patient starts registration\n";
+        co_await SimDelay(env, 10);
+        std::cout << "[" << env.sim_time << "] patient finishes registration\n";
+    });
+
+    // Task: See Doctor (20 time units), waits for registration
+    Task see_doctor_task = env.create_task([&register_task]() -> Task {
+        co_await LabeledAwait{register_task.get_completion_event(), "see_doctor"};
+        std::cout << "[" << env.sim_time << "] patient starts seeing doctor\n";
+        co_await SimDelay(env, 20);
+        std::cout << "[" << env.sim_time << "] patient finishes seeing doctor\n";
+    });
+
+    // Task: Lab Test (40 time units), waits for registration
+    Task lab_test_task = env.create_task([&register_task]() -> Task {
+        co_await LabeledAwait{register_task.get_completion_event(), "lab_test"};
+        std::cout << "[" << env.sim_time << "] patient starts lab test\n";
+        co_await SimDelay(env, 40);
+        std::cout << "[" << env.sim_time << "] patient finishes lab test\n";
+    });
+
+    // Task: Signout, waits for doctor and lab test
+    Task signout_task = env.create_task([&see_doctor_task, &lab_test_task]() -> Task {
+        co_await AllOfEvent(env, {
+            &see_doctor_task.get_completion_event(),
+            &lab_test_task.get_completion_event()
+        });
+        std::cout << "[" << env.sim_time << "] patient signs out\n";
+    });
+
+    // Schedule all tasks
+    env.schedule(register_task, "register");
+    env.schedule(see_doctor_task, "see_doctor");
+    env.schedule(lab_test_task, "lab_test");
+    env.schedule(signout_task, "signout");
+
+    env.run();
+}
+
 int main() {
     example_1();
     example_2();
     example_3();
     example_4();
+    example_patient_flow();
     return 0;
 }
