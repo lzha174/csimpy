@@ -57,10 +57,16 @@ struct SimEvent : SimEventBase {
     std::variant<std::monostate, int, std::string> value;
     CSimpyEnv& env;
     std::vector<std::function<void(int)>> callbacks;
+    bool done = false;
 
     SimEvent(CSimpyEnv& env_) : env(env_) {}
 
-    bool await_ready() const noexcept { return false; }
+    bool await_ready() const noexcept {
+        if (!done) {
+            return false;
+        }
+        return true;
+    }
 
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         callbacks.emplace_back([this, h, label](int time) {
@@ -89,6 +95,7 @@ struct SimEvent : SimEventBase {
             cb(time);
         }
         callbacks.clear();
+        done=true;
     }
 
     void resume() override {
@@ -231,9 +238,13 @@ struct AllOfEvent : SimEventBase {
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         waiters.emplace_back(h, label);
         for (SimEvent* e : events) {
+
             e->callbacks.emplace_back([this](int t) {
                 this->count(t);
             });
+            if (e->done) {
+                e->on_succeed(env.sim_time);
+            }
 
             if (auto* delay = dynamic_cast<SimDelay*>(e)) {
                 // Force scheduling of delay event on the heap if it hasn’t been already

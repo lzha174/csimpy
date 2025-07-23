@@ -229,8 +229,13 @@ struct ContainerGetEvent {
 struct SimEvent : SimEventBase {
     std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
     std::variant<std::monostate, int, std::string> value;
-
-    bool await_ready() const noexcept { return false; }
+    bool done = false;
+    bool await_ready() const noexcept {
+        if (!done) {
+            return false;
+        }
+        return true;
+    }
 
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         waiters.emplace_back(h, label);  // allow multiple waiters with labels
@@ -259,6 +264,7 @@ struct SimEvent : SimEventBase {
             event_queue.push(new CoroutineProcess(time, h, "SimEvent::trigger -> " + label));
         }
         waiters.clear();
+        done=true;
     }
 
     void resume() override {
@@ -331,11 +337,13 @@ Task processA(Task& td) {
     std::cout << "[" << sim_time << "] processA done waiting on sub_process\n";
 }
 
-Task processB(Task& td) {
+Task processB(Task& td, Task& tf) {
     std::cout << "[" << sim_time << "] processB waiting...\n";
     auto sub_val = co_await LabeledAwait{td.get_completion_event(), "processB"};
 
     std::cout << "[" << sim_time << "] processB done waiting on sub_process\n";
+    co_await tf.get_completion_event();
+    std::cout << "[" << sim_time << "] processB done waiting on task\n";
 }
 
 Task trigger_process(SimEvent& e) {
@@ -380,19 +388,19 @@ int main() {
 
     auto ts = subc();
     auto ta = processA(ts);
-    auto tb = processB(ts);
+    auto tb = processB(ts, ta);
     auto tt = trigger_process(shared_event);
 
     auto tput = test_put_first();
     auto tget = test_get_second();
 
     // Manually enqueue initial coroutine entries
-   // event_queue.push(new CoroutineProcess(0, ta.h, "processA"));
-    //event_queue.push(new CoroutineProcess(0, tb.h, "processB"));
-    //event_queue.push(new CoroutineProcess(0, ts.h, "sub_process"));
+     event_queue.push(new CoroutineProcess(0, ta.h, "processA"));
+     event_queue.push(new CoroutineProcess(0, tb.h, "processB"));
+     event_queue.push(new CoroutineProcess(0, ts.h, "sub_process"));
     //event_queue.push(new CoroutineProcess(0, tt.h, "trigger_process"));
-    event_queue.push(new CoroutineProcess(0, tput.h, "test_put_first"));
-    event_queue.push(new CoroutineProcess(0, tget.h, "test_get_second"));
+    //event_queue.push(new CoroutineProcess(0, tput.h, "test_put_first"));
+    //event_queue.push(new CoroutineProcess(0, tget.h, "test_get_second"));
 
     while (!event_queue.empty()) {
         //print_event_queue_state();  // 🔍 Print before processing
