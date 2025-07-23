@@ -45,9 +45,9 @@ void example_1() {
 }
 
 void example_2() {
-    CSimpyEnv env;
-    Container test_container(env,15, "test_container");
-    Task test_put_first = env.create_task([&env, &test_container]()  -> Task {
+    // Use global env
+    Container test_container(env, 15, "test_container");
+    Task test_put_first = env.create_task([&test_container]()  -> Task {
         co_await SimDelay(env, 5);  // wait 5 units
         std::cout << "[" << env.sim_time << "] test_put_first: putting 4\n";
         co_await ContainerPutEvent(test_container, 4);
@@ -59,11 +59,11 @@ void example_2() {
         std::cout << "[" << env.sim_time << "] test_put_first: done\n";
    });
 
-    Task test_get_second = env.create_task([&env, &test_container]() -> Task {
-        co_await SimDelay(env,6);  // wait 5 units
-        std::cout << "[" << env.sim_time << "] test_get_second: trying to get 3"<< " current level  "<<test_container.level << std::endl;;
+    Task test_get_second = env.create_task([&test_container]() -> Task {
+        co_await SimDelay(env,6);  // wait 6 units
+        std::cout << "[" << env.sim_time << "] test_get_second: trying to get 3"<< " current level  "<<test_container.level << std::endl;
         co_await ContainerGetEvent(test_container, 3);
-        std::cout << "[" <<  env.sim_time << "] test_get_second: got 3"<< " current level  "<<test_container.level << std::endl;;
+        std::cout << "[" <<  env.sim_time << "] test_get_second: got 3"<< " current level  "<<test_container.level << std::endl;
 
         std::cout << "[" << env.sim_time << "] test_get_second: trying to get 9"<< " current level  "<<test_container.level << std::endl;
         co_await ContainerGetEvent(test_container, 9);
@@ -71,58 +71,47 @@ void example_2() {
    });
     env.schedule(test_put_first, "test_put_first");
     env.schedule(test_get_second, "test_get_second");
-
-
-
     env.run();
-
 }
 
 
 void example_3() {
-    CSimpyEnv env;
-
-    Task proc_all_wait = env.create_task([&env]() -> Task {
+    // Use global env
+    Task proc_all_wait = env.create_task([]() -> Task {
         SimDelay d1(env, 5);
         SimDelay d2(env, 10);
         co_await AllOfEvent{env, {&d1, &d2}};
         std::cout << "[" << env.sim_time << "] All delays finished.\n";
     });
-
     env.schedule(proc_all_wait, "proc_all_wait");
-
     env.run();
 }
 
 void example_4() {
-    CSimpyEnv env;
-
+    // Use global env
     // Shared event
     auto shared_event = std::make_unique<SimEvent>(env);
-
-    Task task1 = env.create_task([&env, &shared_event]() -> Task {
+    Task task1 = env.create_task([&shared_event]() -> Task {
         co_await SimDelay(env, 1);
         std::cout << "[" << env.sim_time << "] task1 waiting on shared_event or timeout\n";
         auto timeout = SimDelay(env, 5);
-
         co_await AllOfEvent{env, {&timeout, shared_event.get()}};
         std::cout << "[" << env.sim_time << "] task1 finished waiting (timeout and event)\n";
     });
-
-    Task task2 = env.create_task([&env, &shared_event]() -> Task {
+    Task task2 = env.create_task([&shared_event]() -> Task {
         co_await SimDelay(env, 10);
         std::cout << "[" << env.sim_time << "] task2 triggering shared_event\n";
         shared_event->on_succeed(env.sim_time);
     });
-
     env.schedule(task1, "task1");
     env.schedule(task2, "task2");
-
     env.run();
 }
 
 int main() {
     example_1();
-    //example_2();
+    example_2();
+    example_3();
+    example_4();
     return 0;
 }
