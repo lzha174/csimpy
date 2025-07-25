@@ -16,6 +16,7 @@ class Task;
 
 struct SimEventBase {
     int sim_time;
+    int delay = 0;
     virtual void resume() = 0;
     virtual ~SimEventBase() = default;
 };
@@ -59,7 +60,9 @@ struct SimEvent : SimEventBase {
     std::vector<std::function<void(int)>> callbacks;
     bool done = false;
 
-    SimEvent(CSimpyEnv& env_) : env(env_) {}
+    SimEvent(CSimpyEnv& env_) : env(env_) {
+        sim_time = env.sim_time + delay;
+    }
 
     bool await_ready() const noexcept {
         if (!done) {
@@ -102,12 +105,18 @@ struct SimEvent : SimEventBase {
         trigger(env.sim_time);
     }
 
+    virtual SimEvent* clone_for_schedule() const {
+        auto* clone = new SimEvent(env);
+        clone->value = value;
+
+        return clone;
+    }
+
     // Schedules a heap-allocated copy of this event at the given time and clears callbacks.
     void on_succeed() {
-        auto heap_event = new SimEvent(env);
-        heap_event->value = this->value;
+        SimEvent* heap_event = this->clone_for_schedule();
         heap_event->callbacks = std::move(this->callbacks);
-        heap_event->sim_time = env.sim_time;
+        //heap_event->sim_time = this->sim_time;
         this->callbacks.clear();
         env.schedule(heap_event);
     }
@@ -185,8 +194,13 @@ struct SimDelay : SimEvent {
     int delay;
 
     SimDelay(CSimpyEnv& e, int d)
-        : SimEvent(e), delay(d) {
+        : SimEvent(e) {
+        delay = d;
         sim_time = env.sim_time + delay;
+    }
+
+    SimEvent* clone_for_schedule() const override {
+        return new SimDelay(env, delay);
     }
 
     void await_suspend(std::coroutine_handle<> h,
@@ -196,11 +210,7 @@ struct SimDelay : SimEvent {
                 when, h, "SimDelay::resume handler -> " + label));
         });
 
-        auto heapDelay = std::make_unique<SimDelay>(env, delay);
-        heapDelay->callbacks = std::move(callbacks);
-        callbacks.clear();
-
-        env.schedule(heapDelay.release());
+        this->on_succeed();
 
 
     }
@@ -248,10 +258,7 @@ struct AllOfEvent : SimEventBase {
 
             if (auto* delay = dynamic_cast<SimDelay*>(e)) {
 
-                auto heapDelay = std::make_unique<SimDelay>(env, delay->delay);
-                heapDelay->callbacks = std::move(delay->callbacks); // transfer callbacks
-                delay->callbacks.clear();
-                env.schedule(heapDelay.release());
+                delay->on_succeed();
 
             }
         }
