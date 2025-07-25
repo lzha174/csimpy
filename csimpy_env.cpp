@@ -31,7 +31,11 @@ Task CSimpyEnv::create_task(std::function<Task()> coroutine_func) {
 }
 
 
+
+
 void CSimpyEnv::print_event_queue_state() {
+    if (!DEBUG_PRINT_QUEUE) return;
+
     std::vector<SimEventBase*> temp;
 
     std::cout << "🪄 Event Queue @ time " << sim_time << ":\n";

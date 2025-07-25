@@ -13,7 +13,7 @@ struct CompareSimEvent;
 struct CoroutineProcess;
 class SimEvent;
 class Task;
-
+constexpr bool DEBUG_PRINT_QUEUE = false;
 struct SimEventBase {
     int sim_time;
     int delay = 0;
@@ -216,7 +216,7 @@ struct SimDelay : SimEvent {
     }
 
     void resume() override {
-        std::cout << "[" << env.sim_time << "] SimDelay resumed.\n";
+        if (DEBUG_PRINT_QUEUE) std::cout << "[" << env.sim_time << "] SimDelay resumed.\n";
         trigger(env.sim_time);
     }
 };
