@@ -95,7 +95,7 @@ struct SimEvent : SimEventBase {
             cb(time);
         }
         callbacks.clear();
-        done=true;
+        done=true; // finished all callbacks..done is true..
     }
 
     void resume() override {
@@ -103,11 +103,11 @@ struct SimEvent : SimEventBase {
     }
 
     // Schedules a heap-allocated copy of this event at the given time and clears callbacks.
-    void on_succeed(int time) {
+    void on_succeed() {
         auto heap_event = new SimEvent(env);
         heap_event->value = this->value;
         heap_event->callbacks = std::move(this->callbacks);
-        heap_event->sim_time = time;
+        heap_event->sim_time = env.sim_time;
         this->callbacks.clear();
         env.schedule(heap_event);
     }
@@ -182,33 +182,32 @@ struct LabeledAwait {
 };
 
 struct SimDelay : SimEvent {
-    SimDelay(CSimpyEnv& e, int delay)
-        : SimEvent(e) {
-        sim_time = e.sim_time + delay;
+    int delay;
+
+    SimDelay(CSimpyEnv& e, int d)
+        : SimEvent(e), delay(d) {
+        sim_time = env.sim_time + delay;
     }
 
-    // schedule a heap-allocated copy, not `this`
     void await_suspend(std::coroutine_handle<> h,
                        const std::string& label = "?") {
-        // store the coroutine-resumption callback
         callbacks.emplace_back([this, h, label](int when) {
             env.schedule(new CoroutineProcess(
                 when, h, "SimDelay::resume handler -> " + label));
-            //env.print_event_queue_state();
         });
 
-        // ----- clone onto heap using smart pointer -----
-        int remaining = sim_time - env.sim_time;          // delay left
-        auto heapDelay = std::make_unique<SimDelay>(env, remaining);   // smart pointer
-        heapDelay->callbacks = std::move(callbacks);      // move callbacks
-        callbacks.clear();                                // (optional)
+        auto heapDelay = std::make_unique<SimDelay>(env, delay);
+        heapDelay->callbacks = std::move(callbacks);
+        callbacks.clear();
 
-        env.schedule(heapDelay.release());   // release raw pointer to pass to schedule
+        env.schedule(heapDelay.release());
+
+
     }
 
     void resume() override {
         std::cout << "[" << env.sim_time << "] SimDelay resumed.\n";
-        trigger(sim_time);   // execute stored callbacks
+        trigger(env.sim_time);
     }
 };
 // Waits for all of a set of SimEvents to complete, then triggers itself.
@@ -242,14 +241,14 @@ struct AllOfEvent : SimEventBase {
             e->callbacks.emplace_back([this](int t) {
                 this->count(t);
             });
-            if (e->done) {
-                e->on_succeed(env.sim_time);
+            if (e->done && dynamic_cast<SimDelay*>(e) == nullptr) {
+                // it still has callback to allof event and is not a SimDelay
+                e->on_succeed();
             }
 
             if (auto* delay = dynamic_cast<SimDelay*>(e)) {
-                // Force scheduling of delay event on the heap if it hasn’t been already
-                int remaining = delay->sim_time - env.sim_time;
-                auto heapDelay = std::make_unique<SimDelay>(env, remaining);
+
+                auto heapDelay = std::make_unique<SimDelay>(env, delay->delay);
                 heapDelay->callbacks = std::move(delay->callbacks); // transfer callbacks
                 delay->callbacks.clear();
                 env.schedule(heapDelay.release());
