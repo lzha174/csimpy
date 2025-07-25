@@ -1,18 +1,18 @@
-xxxxx
+# CSimpy
 
-# csimpy
+CSimPy is a lightweight C++20 coroutine-based discrete event simulation engine, inspired by SimPy. It is designed to model asynchronous workflows and resource contention in a SimPy-style API, bringing familiar concepts into the C++ ecosystem. The framework aims to give researchers and students a practical and fun way to explore discrete event simulation with modern C++20 coroutines.
 
-**csimpy** is a C++ coroutine-based discrete event simulation engine inspired by Python's SimPy. It enables precise modeling of concurrent processes, resource constraints, and event-driven logic using C++20 coroutines.
 
 ---
 
 ## 📦 Core Components
 
 ### 1. `CSimpyEnv`
-The simulation environment. It tracks:
-- `sim_time`: current simulation time
-- `event_queue`: priority queue of scheduled events
-- Coroutine scheduling and resumption
+The simulation environment. It manages:
+- `sim_time`: the current simulation clock
+- `event_queue`: a priority queue of scheduled `SimEvent`s
+- `schedule()`: inserts events into the queue based on their `sim_time`
+- Advances simulation time and process events when triggered
 
 ### 2. `SimEvent`
 Base class for events. Supports:
@@ -21,7 +21,7 @@ Base class for events. Supports:
 - Manual or automatic triggering
 
 ### 3. `SimDelay`
-A subclass of `SimEvent` for time-based delays. Automatically schedules itself based on `env.sim_time + delay`.
+A subclass of `SimEvent` for time-based delays.
 
 ### 4. `CoroutineProcess`
 Wraps coroutine handles as simulation tasks. Scheduled in the event queue for resumption.
