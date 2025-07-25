@@ -9,13 +9,15 @@ include_directories(/usr/local/Cellar/doctest/2.4.12/include)
 
 find_package(doctest REQUIRED)
 
-# Main executable for simulator
+enable_testing()
+
+# Regression tests executable
 add_executable(csimpy
-        main.cpp
+        regression_test.cpp
         csimpy_env.cpp
         examples.cpp
 )
 
-#
+target_link_libraries(csimpy PRIVATE doctest::doctest)
 
 
