@@ -13,7 +13,7 @@ struct CompareSimEvent;
 struct CoroutineProcess;
 class SimEvent;
 class Task;
-constexpr bool DEBUG_PRINT_QUEUE = false;
+constexpr bool DEBUG_PRINT_QUEUE = true;
 struct SimEventBase {
     int sim_time;
     int delay = 0;
@@ -32,10 +32,10 @@ public:
     int sim_time = 0;
 
     std::priority_queue<SimEventBase*, std::vector<SimEventBase*>, CompareSimEvent> event_queue;
-
+    std::vector<std::shared_ptr<Task>> active_tasks;
     void schedule(SimEventBase*);
-    void schedule(Task&, const std::string&);
-    Task create_task(std::function<Task()> coroutine_func);
+    void schedule(std::shared_ptr<Task> t, const std::string& label) ;
+    std::shared_ptr<Task> create_task(std::function<Task()> coroutine_func);
     void print_event_queue_state();
     void run();
 };
@@ -125,32 +125,35 @@ struct SimEvent : SimEventBase {
 
 
 
-inline thread_local CSimpyEnv* current_env = nullptr;
-
 struct TaskPromise {
-    CSimpyEnv& env;
-    SimEvent completion_event;
-
-    TaskPromise() : env(*current_env), completion_event(env) {
-    }
+    std::shared_ptr<SimEvent> completion_event;
 
     Task get_return_object();
 
+    void set_completion_event(std::shared_ptr<SimEvent> ce) {
+        completion_event = std::move(ce);
+    }
+
     std::suspend_always initial_suspend() { return {}; }
+
     auto final_suspend() noexcept {
         struct FinalAwaiter {
             TaskPromise* promise;
 
             bool await_ready() noexcept { return false; }
             void await_suspend(std::coroutine_handle<>) const noexcept {
-                promise->completion_event.set_value(std::string("done"));
-                promise->completion_event.trigger(promise->env.sim_time);
+                if (promise->completion_event) {
+                    promise->completion_event->set_value(std::string("done"));
+                    promise->completion_event->trigger(
+                        promise->completion_event->env.sim_time);
+                }
             }
 
             void await_resume() noexcept {}
         };
         return FinalAwaiter{this};
     }
+
     void return_void() {}
     void unhandled_exception() { std::exit(1); }
 };
@@ -160,16 +163,36 @@ struct Task {
     std::coroutine_handle<TaskPromise> h;
 
     explicit Task(std::coroutine_handle<TaskPromise> h) : h(h) {}
-    ~Task() {
-        if (h) h.destroy();
+
+    Task(Task&& other) noexcept : h(other.h) {
+        other.h = nullptr;
     }
 
+    Task& operator=(Task&& other) noexcept {
+        if (this != &other) {
+            if (h) h.destroy();
+            h = other.h;
+            other.h = nullptr;
+        }
+        return *this;
+    }
+
+    ~Task() {
+        if (h) {
+            h.destroy();
+        }// only destroys if we still own the handle
+    }
+
+    // disable copy to avoid double free
+    Task(const Task&) = delete;
+    Task& operator=(const Task&) = delete;
+
     SimEvent& get_completion_event() {
-        return h.promise().completion_event;
+        return *h.promise().completion_event;
     }
 
     CSimpyEnv& get_env() {
-        return h.promise().env;
+        return h.promise().completion_event->env;
     }
 
     bool done() const {
@@ -229,6 +252,7 @@ struct AllOfEvent : SimEventBase {
 
     AllOfEvent(CSimpyEnv& env_, std::vector<SimEvent*> evts) : events(std::move(evts)), env(env_) {
         // Removed lambda trampoline and heap-allocated fake awaiters from constructor
+        auto x = 3;
     }
 
     void count(int time) {
