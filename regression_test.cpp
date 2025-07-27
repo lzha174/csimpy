@@ -67,6 +67,7 @@ TEST_CASE("example_3 regression") {
     CHECK_EQ(output, expected);
 }
 
+
 TEST_CASE("example_4 regression") {
     std::stringstream buffer;
     std::streambuf* old = std::cout.rdbuf(buffer.rdbuf());
@@ -80,6 +81,59 @@ TEST_CASE("example_4 regression") {
         "[1] task1 waiting on shared_event or timeout\n"
         "[10] task2 triggering shared_event\n"
         "[10] task1 finished waiting (timeout and event)\n";
+
+    CHECK_EQ(output, expected);
+}
+
+TEST_CASE("example_5 regression") {
+    std::stringstream buffer;
+    std::streambuf* old = std::cout.rdbuf(buffer.rdbuf());
+
+    example_5();
+
+    std::cout.rdbuf(old);
+    std::string output = buffer.str();
+
+    const char* expected =
+        "[0] proc_any_wait started\n"
+        "[5] AnyOfEvent triggered after one delay\n";
+
+    CHECK_EQ(output, expected);
+}
+
+TEST_CASE("example_6 regression") {
+    std::stringstream buffer;
+    std::streambuf* old = std::cout.rdbuf(buffer.rdbuf());
+
+    example_6();
+
+    std::cout.rdbuf(old);
+    std::string output = buffer.str();
+
+    const char* expected =
+        "[0] proc_b started\n"
+        "[0] proc_b waiting on proc_a or 10 delay\n"
+        "[0] proc_a started\n"
+        "[5] proc_a finished\n"
+        "[5] proc_b resumed after AnyOfEvent\n";
+
+    CHECK_EQ(output, expected);
+}
+
+TEST_CASE("example_7 regression") {
+    std::stringstream buffer;
+    std::streambuf* old = std::cout.rdbuf(buffer.rdbuf());
+
+    example_7();
+
+    std::cout.rdbuf(old);
+    std::string output = buffer.str();
+
+    const char* expected =
+        "[0] proc_b started\n"
+        "[10] proc_b finished delay, now scheduling proc_a\n"
+        "[10] proc_a started\n"
+        "[15] proc_a finished\n";
 
     CHECK_EQ(output, expected);
 }

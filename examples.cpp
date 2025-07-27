@@ -156,3 +156,59 @@ void example_patient_flow() {
 
     env.run();
 }
+
+void example_5() {
+    CSimpyEnv env;
+    auto proc_any_wait = env.create_task([&env]() -> Task {
+        std::cout << "[" << env.sim_time << "] proc_any_wait started\n";
+        SimDelay d1(env, 5);
+        SimDelay d2(env, 10);
+        co_await AnyOfEvent{env, {&d1, &d2}};
+        std::cout << "[" << env.sim_time << "] AnyOfEvent triggered after one delay\n";
+    });
+    env.schedule(proc_any_wait, "proc_any_wait");
+    env.run();
+}
+
+void example_6() {
+    CSimpyEnv env;
+
+    auto proc_a = env.create_task([&env]() -> Task {
+        std::cout << "[" << env.sim_time << "] proc_a started\n";
+        co_await SimDelay(env, 5);
+        std::cout << "[" << env.sim_time << "] proc_a finished\n";
+    });
+
+    auto proc_b = env.create_task([&env, &proc_a]() -> Task {
+        std::cout << "[" << env.sim_time << "] proc_b started\n";
+        SimDelay d1(env, 10);
+        std::cout << "[" << env.sim_time << "] proc_b waiting on proc_a or 10 delay\n";
+        co_await AnyOfEvent{env, {&proc_a->get_completion_event(), &d1}};
+        std::cout << "[" << env.sim_time << "] proc_b resumed after AnyOfEvent\n";
+    });
+
+    env.schedule(proc_b, "proc_b");
+    env.schedule(proc_a, "proc_a");
+
+    env.run();
+}
+
+void example_7() {
+    CSimpyEnv env;
+    auto proc_a = env.create_task([&env]() -> Task {
+        std::cout << "[" << env.sim_time << "] proc_a started\n";
+        co_await SimDelay(env, 5);
+        std::cout << "[" << env.sim_time << "] proc_a finished\n";
+    });
+    auto proc_b = env.create_task([&env, &proc_a]() -> Task {
+        std::cout << "[" << env.sim_time << "] proc_b started\n";
+        co_await SimDelay(env, 10);
+        std::cout << "[" << env.sim_time << "] proc_b finished delay, now scheduling proc_a\n";
+
+        env.schedule(proc_a, "proc_a");
+    });
+
+    env.schedule(proc_b, "proc_b");
+
+    env.run();
+}

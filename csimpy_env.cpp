@@ -6,7 +6,7 @@ void CSimpyEnv::schedule(SimEventBase* e) {
 }
 
 void CSimpyEnv::schedule(std::shared_ptr<Task> t, const std::string& label) {
-    auto* proc = new CoroutineProcess(0, t->h, label);
+    auto* proc = new CoroutineProcess(this->sim_time, t->h, label);
     schedule(proc);
 }
 

@@ -4,7 +4,7 @@
 
 int main() {
      //example_4();
-     example_1();
+     example_6();
 
      //env.schedule(wait_example, "proc_c");
      //env.run();

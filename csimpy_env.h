@@ -306,6 +306,67 @@ struct AllOfEvent : SimEventBase {
 };
 
 
+// Waits for *any* of a set of SimEvents to complete, then triggers itself.
+struct AnyOfEvent : SimEventBase {
+    std::vector<SimEvent*> events;
+    std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
+    bool triggered = false;
+    CSimpyEnv& env;
+
+    AnyOfEvent(CSimpyEnv& env_, std::vector<SimEvent*> evts)
+        : events(std::move(evts)), env(env_) {}
+
+    void trigger_now(int time) {
+        if (triggered) return; // prevent double trigger
+        triggered = true;
+
+        // Remove all callbacks from other events so they won't fire later
+        for (auto* e : events) {
+            e->callbacks.clear();
+        }
+
+        // Schedule this AnyOfEvent
+        auto self = new AnyOfEvent(env, events);
+        self->waiters = std::move(waiters);
+        self->sim_time = time;
+        env.schedule(self);
+    }
+
+    bool await_ready() const noexcept { return false; }
+
+    void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
+        waiters.emplace_back(h, label);
+
+        for (SimEvent* e : events) {
+            e->callbacks.emplace_back([this](int t) {
+                this->trigger_now(t);
+            });
+
+            // Handle events that are already done
+            if (e->done && dynamic_cast<SimDelay*>(e) == nullptr) {
+                // it still has callback to anyof event and is not a SimDelay
+                e->on_succeed();
+            }
+
+            if (auto* delay = dynamic_cast<SimDelay*>(e)) {
+
+                delay->on_succeed();
+
+            }
+        }
+    }
+
+    auto await_resume() const {
+        return std::string("any_done");
+    }
+
+    void resume() override {
+        for (const auto& [wh, label] : waiters) {
+            env.schedule(new CoroutineProcess(env.sim_time, wh, "AnyOfEvent::resume handler-> " + label));
+        }
+        waiters.clear();
+    }
+};
 
 template<typename F>
 std::shared_ptr<Task> CSimpyEnv::create_task(F&& coroutine_func) {
