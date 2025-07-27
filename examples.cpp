@@ -11,35 +11,40 @@ CSimpyEnv& get_global_env() {
     return env;
 }
 
+
+
 void example_1() {
     CSimpyEnv env;
 
-    // Create tasks using shared_ptr
-    auto process_c = env.create_task([&env]() -> Task {
+    auto proc_c = env.create_task([&env]() -> Task {
         std::cout << "[" << env.sim_time << "] process_c started\n";
         co_await SimDelay(env, 15);
         std::cout << "[" << env.sim_time << "] process_c finished\n";
-        co_return;
     });
 
-    auto process_b = env.create_task([&env, &process_c]() -> Task {
-        std::cout << "[" << env.sim_time << "] process_b started\n";
-        co_await process_c->get_completion_event();
-        std::cout << "[" << env.sim_time << "] process_b finished\n";
-        co_return;
-    });
-
-    auto process_a = env.create_task([&env, &process_b]() -> Task {
+    auto proc_a = env.create_task([&env, &proc_c]() -> Task {
         std::cout << "[" << env.sim_time << "] process_a started\n";
-        co_await process_b->get_completion_event();
-        std::cout << "[" << env.sim_time << "] process_a finished\n";
-        co_return;
+        co_await SimDelay(env, 5);
+        std::cout << "[" << env.sim_time << "] process_a now waiting on process_c\n";
+        co_await LabeledAwait{proc_c->get_completion_event(), "process_a"};
+        std::cout << "[" << env.sim_time << "] process_a resumed after process_c\n";
+        co_await SimDelay(env, 25);
+        std::cout << "[" << env.sim_time << "] process_a finished \n";
     });
 
-    // Schedule tasks by passing shared_ptr
-    env.schedule(process_c, "process_c");
-    env.schedule(process_b, "process_b");
-    env.schedule(process_a, "process_a");
+    auto proc_b = env.create_task([&env, &proc_c, &proc_a]() -> Task {
+        std::cout << "[" << env.sim_time << "] process_b started\n";
+        co_await SimDelay(env, 10);
+        std::cout << "[" << env.sim_time << "] process_b now waiting on process_c\n";
+        co_await LabeledAwait{proc_c->get_completion_event(), "process_b"};
+        std::cout << "[" << env.sim_time << "] process_b resumed after process_c\n";
+        co_await AllOfEvent{env, {&proc_c->get_completion_event(), &proc_a->get_completion_event()}};
+        std::cout << "[" << env.sim_time << "] proc_b finished waiting allofevent\n";
+    });
+
+    env.schedule(proc_c, "process_c");
+    env.schedule(proc_b, "process_b");
+    env.schedule(proc_a, "process_a");
 
     env.run();
 }
