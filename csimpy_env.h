@@ -13,7 +13,7 @@ struct CompareSimEvent;
 struct CoroutineProcess;
 class SimEvent;
 class Task;
-constexpr bool DEBUG_PRINT_QUEUE = true;
+constexpr bool DEBUG_PRINT_QUEUE = false;
 struct SimEventBase {
     int sim_time;
     int delay = 0;
@@ -33,12 +33,16 @@ public:
 
     std::priority_queue<SimEventBase*, std::vector<SimEventBase*>, CompareSimEvent> event_queue;
     std::vector<std::shared_ptr<Task>> active_tasks;
+    std::vector<std::shared_ptr<void>> active_functors;
     void schedule(SimEventBase*);
     void schedule(std::shared_ptr<Task> t, const std::string& label) ;
-    std::shared_ptr<Task> create_task(std::function<Task()> coroutine_func);
+    template<typename F>
+    std::shared_ptr<Task> create_task(F&& coroutine_func);
     void print_event_queue_state();
     void run();
 };
+
+
 
 // Concrete event for coroutine handles
 struct CoroutineProcess : SimEventBase {
@@ -300,3 +304,23 @@ struct AllOfEvent : SimEventBase {
 
     }
 };
+
+
+
+template<typename F>
+std::shared_ptr<Task> CSimpyEnv::create_task(F&& coroutine_func) {
+    // Capture the callable into a heap-allocated std::function to ensure it lives
+    auto func_holder = std::make_shared<std::decay_t<F>>(std::forward<F>(coroutine_func));
+
+    // Invoke via the stored function to avoid dangling references to temporaries
+    Task t = (*func_holder)();
+
+    auto sp = std::make_shared<Task>(std::move(t));
+
+    auto ce = std::make_shared<SimEvent>(*this);
+    (sp->h).promise().set_completion_event(ce);
+
+    active_tasks.push_back(sp);
+    active_functors.push_back(func_holder);
+    return sp;
+}

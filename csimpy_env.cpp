@@ -25,19 +25,6 @@ void CSimpyEnv::run() {
     }
 }
 
-std::shared_ptr<Task> CSimpyEnv::create_task(std::function<Task()> coroutine_func) {
-    Task t = coroutine_func();                    // create Task
-    auto handle = t.h;                            // take coroutine handle
-    auto sp = std::make_shared<Task>(std::move(t)); // move into shared_ptr
-
-    auto ce = std::make_shared<SimEvent>(*this);
-    (sp->h).promise().set_completion_event(ce);
-    //handle.promise().set_completion_event(ce);   // pass shared_ptr instead of raw pointer
-
-    active_tasks.push_back(sp);
-    return sp;
-}
-
 
 
 void CSimpyEnv::print_event_queue_state() {

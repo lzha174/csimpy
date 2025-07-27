@@ -15,21 +15,21 @@ void example_1() {
     CSimpyEnv env;
 
     // Create tasks using shared_ptr
-    auto process_c = env.create_task([&]() -> Task {
+    auto process_c = env.create_task([&env]() -> Task {
         std::cout << "[" << env.sim_time << "] process_c started\n";
         co_await SimDelay(env, 15);
         std::cout << "[" << env.sim_time << "] process_c finished\n";
         co_return;
     });
 
-    auto process_b = env.create_task([&]() -> Task {
+    auto process_b = env.create_task([&env, &process_c]() -> Task {
         std::cout << "[" << env.sim_time << "] process_b started\n";
         co_await process_c->get_completion_event();
         std::cout << "[" << env.sim_time << "] process_b finished\n";
         co_return;
     });
 
-    auto process_a = env.create_task([&]() -> Task {
+    auto process_a = env.create_task([&env, &process_b]() -> Task {
         std::cout << "[" << env.sim_time << "] process_a started\n";
         co_await process_b->get_completion_event();
         std::cout << "[" << env.sim_time << "] process_a finished\n";
@@ -89,18 +89,20 @@ void example_3() {
 void example_4() {
     CSimpyEnv env;
     // Shared event
-    auto shared_event = std::make_unique<SimEvent>(env);
-    auto task1 = env.create_task([&env, &shared_event]() -> Task {
+    auto shared_event = std::make_shared<SimEvent>(env);
+    auto shared_event_1 = std::make_shared<SimEvent>(env);
+    auto task1 = env.create_task([&env, &shared_event, &shared_event_1]() -> Task {
         co_await SimDelay(env, 1);
         std::cout << "[" << env.sim_time << "] task1 waiting on shared_event or timeout\n";
         auto timeout = SimDelay(env, 5);
-        co_await AllOfEvent{env, {&timeout, shared_event.get()}};
+        co_await AllOfEvent{env, {&timeout, shared_event.get(), shared_event_1.get()}};
         std::cout << "[" << env.sim_time << "] task1 finished waiting (timeout and event)\n";
     });
-    auto task2 = env.create_task([&env, &shared_event]() -> Task {
+    auto task2 = env.create_task([&env, &shared_event, &shared_event_1]() -> Task {
         co_await SimDelay(env, 10);
         std::cout << "[" << env.sim_time << "] task2 triggering shared_event\n";
         shared_event->on_succeed();
+        shared_event_1->on_succeed();
     });
     env.schedule(task1, "task1");
     env.schedule(task2, "task2");
@@ -136,9 +138,9 @@ void example_patient_flow() {
     auto& doc_event = see_doctor_task->get_completion_event();
     auto& lab_event = lab_test_task->get_completion_event();
 
-    auto signout_task = env.create_task([&env, &doc_event, &lab_event]() -> Task {
+    auto signout_task = env.create_task([&env, &lab_event, &see_doctor_task]() -> Task {
         auto  x =3;
-        co_await AllOfEvent(env, {&doc_event, &lab_event});
+        co_await AllOfEvent(env, {&lab_event, &see_doctor_task->get_completion_event()});
         std::cout << "[" << env.sim_time << "] patient signs out\n";
     });
 
