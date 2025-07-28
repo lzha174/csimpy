@@ -13,6 +13,11 @@ CSimpyEnv& get_global_env() {
 
 
 
+/**
+ * Example 1:
+ * Demonstrates task dependencies and labeled awaits.
+ * proc_a waits for proc_c, proc_b waits for proc_c and then both for AllOfEvent.
+ */
 void example_1() {
     CSimpyEnv env;
 
@@ -48,6 +53,11 @@ void example_1() {
 
     env.run();
 }
+/**
+ * Example 2:
+ * Demonstrates Container usage with put and get operations.
+ * Shows blocking get until sufficient resources are available.
+ */
 void example_2() {
     CSimpyEnv env;
     Container test_container(env, 15, "test_container");
@@ -79,6 +89,11 @@ void example_2() {
 }
 
 
+/**
+ * Example 3:
+ * Demonstrates AllOfEvent with multiple SimDelay events.
+ * Waits until all delays are complete before proceeding.
+ */
 void example_3() {
     CSimpyEnv env;
     auto proc_all_wait = env.create_task([&env]() -> Task {
@@ -91,6 +106,10 @@ void example_3() {
     env.run();
 }
 
+/**
+ * Example 4:
+ * Demonstrates shared events and combining them with timeout using AllOfEvent.
+ */
 void example_4() {
     CSimpyEnv env;
     // Shared event
@@ -114,7 +133,13 @@ void example_4() {
     env.run();
 }
 
-// Example: Patient flow simulation
+/**
+ * Patient Flow Example:
+ * Models a simple patient workflow:
+ * 1. Registration (10 units).
+ * 2. After registration, doctor and lab test start in parallel (20 and 40 units).
+ * 3. Signs out after both are complete.
+ */
 void example_patient_flow() {
     CSimpyEnv env;
 
@@ -140,12 +165,9 @@ void example_patient_flow() {
         std::cout << "[" << env.sim_time << "] patient finishes lab test\n";
     });
 
-    auto& doc_event = see_doctor_task->get_completion_event();
-    auto& lab_event = lab_test_task->get_completion_event();
-
-    auto signout_task = env.create_task([&env, &lab_event, &see_doctor_task]() -> Task {
+    auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
         auto  x =3;
-        co_await AllOfEvent(env, {&lab_event, &see_doctor_task->get_completion_event()});
+        co_await AllOfEvent(env, {&lab_test_task->get_completion_event(), &see_doctor_task->get_completion_event()});
         std::cout << "[" << env.sim_time << "] patient signs out\n";
     });
 
@@ -157,6 +179,10 @@ void example_patient_flow() {
     env.run();
 }
 
+/**
+ * Example 5:
+ * Demonstrates AnyOfEvent waiting for the first of multiple delays to complete.
+ */
 void example_5() {
     CSimpyEnv env;
     auto proc_any_wait = env.create_task([&env]() -> Task {
@@ -170,6 +196,10 @@ void example_5() {
     env.run();
 }
 
+/**
+ * Example 6:
+ * Demonstrates AnyOfEvent combining a task completion event and a SimDelay.
+ */
 void example_6() {
     CSimpyEnv env;
 
@@ -193,6 +223,10 @@ void example_6() {
     env.run();
 }
 
+/**
+ * Example 7:
+ * Demonstrates dynamic scheduling of tasks inside another coroutine after a delay.
+ */
 void example_7() {
     CSimpyEnv env;
     auto proc_a = env.create_task([&env]() -> Task {

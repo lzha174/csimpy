@@ -19,6 +19,11 @@ add_executable(csimpy_main
         ${CSIMPY_SOURCES}
 )
 
+add_executable(csimpy_play
+        play.cpp
+        ${CSIMPY_SOURCES}
+)
+
 # ---- Regression test executable ----
 add_executable(csimpy_tests
         regression_test.cpp
