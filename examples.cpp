@@ -54,23 +54,23 @@ void example_2() {
     auto test_put_first = env.create_task([&env, &test_container]()  -> Task {
         co_await SimDelay(env, 5);  // wait 5 units
         std::cout << "[" << env.sim_time << "] test_put_first: putting 4\n";
-        co_await ContainerPutEvent(env, test_container, 4);
+        co_await test_container.put(4);
         std::cout << "[" << env.sim_time << "] test_put_first: done current level " << test_container.level << std::endl ;
 
         co_await SimDelay(env,5);  // wait 5 units
         std::cout << "[" << env.sim_time << "] test_put_first: putting 10\n";
-        co_await ContainerPutEvent(env,test_container, 10);
+        co_await test_container.put(10);
         std::cout << "[" << env.sim_time << "] test_put_first: done current level " << test_container.level << std::endl ;
     });
 
     auto test_get_second = env.create_task([&env, &test_container]() -> Task {
         co_await SimDelay(env,6);  // wait 6 units
         std::cout << "[" << env.sim_time << "] test_get_second: trying to get 3"<< " current level  "<<test_container.level << std::endl;
-        co_await ContainerGetEvent(env,test_container, 3);
+        co_await test_container.get(3);
         std::cout << "[" <<  env.sim_time << "] test_get_second: got 3"<< " current level  "<<test_container.level << std::endl;
 
         std::cout << "[" << env.sim_time << "] test_get_second: trying to get 9"<< " current level  "<<test_container.level << std::endl;
-        co_await ContainerGetEvent(env, test_container, 9);
+        co_await test_container.get(9);
         std::cout << "[" << env.sim_time << "] test_get_second: got 9" << " current level  "<<test_container.level << std::endl;
     });
     env.schedule(test_put_first, "test_put_first");

@@ -14,6 +14,9 @@ struct CompareSimEvent;
 struct CoroutineProcess;
 class SimEvent;
 class Task;
+// Forward declarations for container event types
+struct ContainerPutEvent;
+struct ContainerGetEvent;
 constexpr bool DEBUG_PRINT_QUEUE = false;
 constexpr bool DEBUG_RESOURCE = false;
 struct SimEventBase {
@@ -407,6 +410,9 @@ struct Container : ContainerBase {
 
     Container(CSimpyEnv& e, int cap, std::string n = "") : env(e), capacity(cap), name(std::move(n)) {}
 
+    auto put(int value);
+    auto get(int value);
+
     bool can_put(int value) const override {
         return level + value <= capacity;
     }
@@ -583,10 +589,19 @@ struct ContainerGetEvent : SimEvent {
     }
 
     virtual SimEvent* clone_for_schedule() const override {
-        auto* clone = new ContainerPutEvent(env, container, value);
+        auto* clone = new ContainerGetEvent(env, container, value);
         clone->callbacks = callbacks;
         clone->done = done;
 
         return clone;
     }
 };
+
+// Inline definitions for Container::put and Container::get
+inline auto Container::put(int value) {
+    return ContainerPutEvent(env, *this, value);
+}
+
+inline auto Container::get(int value) {
+    return ContainerGetEvent(env, *this, value);
+}
