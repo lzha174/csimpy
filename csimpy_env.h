@@ -19,6 +19,23 @@ struct ContainerPutEvent;
 struct ContainerGetEvent;
 constexpr bool DEBUG_PRINT_QUEUE = false;
 constexpr bool DEBUG_RESOURCE = false;
+
+// Base struct for items in Store
+struct ItemBase {
+    std::string name;
+    int id;
+
+    explicit ItemBase(std::string n, int i)
+        : name(std::move(n)), id(i) {}
+
+    virtual ~ItemBase() = default;
+
+    virtual std::string to_string() const {
+        return "Item(" + name + ", id=" + std::to_string(id) + ")";
+    }
+};
+
+
 struct SimEventBase {
     int sim_time;
     int delay = 0;
@@ -68,6 +85,8 @@ struct SimEvent : SimEventBase {
     CSimpyEnv& env;
     std::vector<std::function<void(int)>> callbacks;
     bool done = false;
+    // Optional filter for Store get events
+    std::function<bool(const std::shared_ptr<ItemBase>&)> item_filter;
 
     SimEvent(CSimpyEnv& env_) : env(env_) {
         sim_time = env.sim_time + delay;
@@ -604,4 +623,210 @@ inline auto Container::put(int value) {
 
 inline auto Container::get(int value) {
     return ContainerGetEvent(env, *this, value);
+}
+
+
+
+
+// Derived struct for staff items
+struct StaffItem : ItemBase {
+    std::string role;
+    int skill_level;
+
+    StaffItem(std::string n, int i, std::string r, int skill)
+        : ItemBase(std::move(n), i), role(std::move(r)), skill_level(skill) {}
+
+    std::string to_string() const override {
+        return "StaffItem(" + name + ", id=" + std::to_string(id) +
+               ", role=" + role + ", skill=" + std::to_string(skill_level) + ")";
+    }
+};
+
+struct StorePutEvent;
+struct StoreGetEvent;
+// Store struct similar to Container but for ItemBase objects
+struct Store {
+    CSimpyEnv& env;
+    size_t capacity;
+    std::vector<std::shared_ptr<ItemBase>> items;
+    std::vector<std::shared_ptr<StoreGetEvent>> get_waiters;
+    std::vector<std::shared_ptr<StorePutEvent>> put_waiters;
+    std::string name;
+
+    Store(CSimpyEnv& e, size_t cap, std::string n = "")
+        : env(e), capacity(cap), name(std::move(n)) {}
+
+    bool can_put() const {
+        return items.size() < capacity;
+    }
+
+    bool can_get() const {
+        return !items.empty();
+    }
+
+    void await_put(std::shared_ptr<StorePutEvent> put_event);
+    void await_get(std::shared_ptr<StoreGetEvent> get_event);
+    void trigger_put();
+    void trigger_get();
+
+    auto put(std::shared_ptr<ItemBase> item);
+    auto get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter = {});
+
+
+
+};
+
+// StorePutEvent
+struct StorePutEvent : SimEvent {
+    CSimpyEnv& env;
+    Store& store;
+    std::shared_ptr<ItemBase> item;
+
+    StorePutEvent(CSimpyEnv& env_, Store& s, std::shared_ptr<ItemBase> it)
+        : SimEvent(env_), env(env_), store(s), item(std::move(it)) {
+        sim_time = env.sim_time;
+    }
+
+    struct Awaiter {
+        std::shared_ptr<StorePutEvent> self;
+
+        bool await_ready() const noexcept { return false; }
+
+        void await_suspend(std::coroutine_handle<> h) {
+            auto keep_alive = self;
+            self->store.await_put(keep_alive);
+
+            self->callbacks.emplace_back([keep_alive](int) {
+                keep_alive->store.trigger_get();
+            });
+
+            self->callbacks.emplace_back([keep_alive, h](int t) {
+                keep_alive->env.schedule(
+                    new CoroutineProcess(t, h, "StorePut::callback -> "));
+            });
+
+            self->store.trigger_put();
+        }
+
+        auto await_resume() { return self->item; }
+    };
+
+    auto operator co_await() && {
+        auto ptr = std::make_shared<StorePutEvent>(std::move(*this));
+        return Awaiter{ptr};
+    }
+
+    void resume() override { trigger(); }
+
+    SimEvent* clone_for_schedule() const override {
+        auto* clone = new StorePutEvent(env, store, item);
+        clone->callbacks = callbacks;
+        clone->done = done;
+        return clone;
+    }
+};
+
+// StoreGetEvent
+struct StoreGetEvent : SimEvent {
+    CSimpyEnv& env;
+    Store& store;
+
+    StoreGetEvent(CSimpyEnv& env_, Store& s,
+                  std::function<bool(const std::shared_ptr<ItemBase>&)> filter = {})
+        : SimEvent(env_), env(env_), store(s) {
+        sim_time = env.sim_time;
+        item_filter = std::move(filter);
+    }
+
+    struct Awaiter {
+        std::shared_ptr<StoreGetEvent> self;
+
+        bool await_ready() const noexcept { return false; }
+
+        void await_suspend(std::coroutine_handle<> h) {
+            auto keep_alive = self;
+            // Pass along the filter if present.
+            self->store.await_get(keep_alive);
+
+            self->callbacks.emplace_back([keep_alive](int) {
+                keep_alive->store.trigger_put();
+            });
+
+            self->callbacks.emplace_back([keep_alive, h](int t) {
+                keep_alive->env.schedule(
+                    new CoroutineProcess(t, h, "StoreGet::callback -> "));
+            });
+
+            self->store.trigger_get();
+        }
+
+        auto await_resume() { return self->value; }
+    };
+
+    auto operator co_await() && {
+        auto ptr = std::make_shared<StoreGetEvent>(std::move(*this));
+        return Awaiter{ptr};
+    }
+
+    void resume() override { trigger(); }
+
+    SimEvent* clone_for_schedule() const override {
+        auto* clone = new StoreGetEvent(env, store, item_filter);
+        clone->callbacks = callbacks;
+        clone->done = done;
+        return clone;
+    }
+};
+
+// Inline definition for Store::put
+inline auto Store::put(std::shared_ptr<ItemBase> item) {
+    return StorePutEvent(env, *this, std::move(item));
+}
+
+
+// Inline definition for Store::get
+inline auto Store::get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter) {
+    return StoreGetEvent(env, *this, std::move(filter));
+}
+
+
+// Inline definitions for Store methods
+inline void Store::await_put(std::shared_ptr<StorePutEvent> put_event) {
+    put_waiters.emplace_back(std::move(put_event));
+}
+
+inline void Store::await_get(std::shared_ptr<StoreGetEvent> get_event) {
+    get_waiters.emplace_back(std::move(get_event));
+}
+
+inline void Store::trigger_put() {
+    for (size_t i = 0; i < put_waiters.size();) {
+        auto& evt = put_waiters[i];
+        if (can_put()) {
+            items.push_back(evt->item);
+            evt->on_succeed();
+            put_waiters.erase(put_waiters.begin() + i);
+        } else {
+            ++i;
+        }
+    }
+}
+
+inline void Store::trigger_get() {
+    for (size_t i = 0; i < get_waiters.size();) {
+        auto& evt = get_waiters[i];
+        auto it = std::find_if(items.begin(), items.end(),
+                               [&evt](const std::shared_ptr<ItemBase>& item) {
+                                   return !evt->item_filter || evt->item_filter(item);
+                               });
+        if (it != items.end()) {
+            auto item = *it;
+            items.erase(it);
+            evt->set_value(item->to_string());
+            evt->on_succeed();
+            get_waiters.erase(get_waiters.begin() + i);
+            continue;
+        }
+        ++i;
+    }
 }

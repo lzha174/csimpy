@@ -236,3 +236,36 @@ void example_7() {
 
     env.run();
 }
+
+
+/**
+ * Example 8:
+ * Demonstrates Store usage with putting items and retrieving one using a filter by ID.
+ */
+void example_8() {
+    CSimpyEnv env;
+    Store store(env, 5, "staff_store");
+
+    auto test_task = env.create_task([&env, &store]() -> Task {
+        co_await SimDelay(env, 1);
+
+        auto staff1 = std::make_shared<StaffItem>("Alice", 1, "Nurse", 2);
+        auto staff2 = std::make_shared<StaffItem>("Bob", 2, "Doctor", 3);
+
+        std::cout << "[" << env.sim_time << "] Putting Alice\n";
+        co_await store.put(staff1);
+        std::cout << "[" << env.sim_time << "] Putting Bob\n";
+        co_await store.put(staff2);
+
+        std::cout << "[" << env.sim_time << "] Getting item with id == 2\n";
+        auto filter = [](const std::shared_ptr<ItemBase>& item) {
+            return item->id == 2;
+        };
+        auto v = co_await store.get(filter);
+       std::cout << "[" << env.sim_time << "] Got item with id == "
+                 << std::get<std::string>(v) << std::endl;
+    });
+
+    env.schedule(test_task, "test_task");
+    env.run();
+}
