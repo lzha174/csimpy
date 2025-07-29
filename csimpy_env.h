@@ -33,6 +33,8 @@ struct ItemBase {
     virtual std::string to_string() const {
         return "Item(" + name + ", id=" + std::to_string(id) + ")";
     }
+
+    virtual ItemBase* clone() const = 0;
 };
 
 
@@ -640,6 +642,10 @@ struct StaffItem : ItemBase {
         return "StaffItem(" + name + ", id=" + std::to_string(id) +
                ", role=" + role + ", skill=" + std::to_string(skill_level) + ")";
     }
+
+    ItemBase* clone() const override {
+        return new StaffItem(*this);
+    }
 };
 
 struct StorePutEvent;
@@ -669,7 +675,7 @@ struct Store {
     void trigger_put();
     void trigger_get();
 
-    auto put(std::shared_ptr<ItemBase> item);
+    auto put(ItemBase& item);
     auto get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter = {});
 
 
@@ -779,8 +785,9 @@ struct StoreGetEvent : SimEvent {
 };
 
 // Inline definition for Store::put
-inline auto Store::put(std::shared_ptr<ItemBase> item) {
-    return StorePutEvent(env, *this, std::move(item));
+inline auto Store::put(ItemBase& item) {
+    auto ptr = std::shared_ptr<ItemBase>(item.clone());
+    return StorePutEvent(env, *this, std::move(ptr));
 }
 
 

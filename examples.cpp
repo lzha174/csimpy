@@ -249,8 +249,8 @@ void example_8() {
     auto test_task = env.create_task([&env, &store]() -> Task {
         co_await SimDelay(env, 1);
 
-        auto staff1 = std::make_shared<StaffItem>("Alice", 1, "Nurse", 2);
-        auto staff2 = std::make_shared<StaffItem>("Bob", 2, "Doctor", 3);
+        StaffItem staff1("Alice", 1, "Nurse", 2);
+        StaffItem staff2("Bob", 2, "Doctor", 3);
 
         std::cout << "[" << env.sim_time << "] Putting Alice\n";
         co_await store.put(staff1);
@@ -261,9 +261,9 @@ void example_8() {
         auto filter = [](const std::shared_ptr<ItemBase>& item) {
             return item->id == 2;
         };
-        auto v = co_await store.get(filter);
-       std::cout << "[" << env.sim_time << "] Got item with id == "
-                 << std::get<std::string>(v) << std::endl;
+        auto val = co_await store.get(filter);
+        std::cout << "[" << env.sim_time << "] Got item with id == "
+                  << std::get<std::string>(val) << std::endl;
     });
 
     env.schedule(test_task, "test_task");
