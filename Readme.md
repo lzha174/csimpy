@@ -37,6 +37,13 @@ Completes when *any one* of the dependencies triggers.
 A resource container supporting `put()` and `get()` operations with capacity constraints. 
 Useful for modeling consumable or producible resources like inventory, fluids, or queues.
 
+### 8. `Store`
+A resource store for holding `ItemBase`-derived objects with limited capacity.
+- Supports `put()` and `get()` operations using `co_await`.
+- Items are managed as `std::shared_ptr<ItemBase>`.
+- `get()` supports filter lambdas to select specific items.
+- Useful for modeling queues of objects such as staff, jobs, or inventory.
+
 
 ---
 
@@ -64,6 +71,33 @@ co_await AllOfEvent{env, {&d1, &d2}};
 auto d1 = SimDelay(env, 5);
 auto d2 = SimDelay(env, 10);
 co_await AnyOfEvent{env, {&d1, &d2}};
+```
+
+### Store Example
+```cpp
+CSimpyEnv env;
+Store store(env, 5);
+
+auto task = env.create_task([&env, &store]() -> Task {
+    StaffItem alice("Alice", 1, "Nurse", 2);
+    StaffItem bob("Bob", 2, "Doctor", 3);
+
+    co_await store.put(alice);
+    co_await store.put(bob);
+
+    // Get by filter (id == 2)
+    auto item = co_await store.get([](const std::shared_ptr<ItemBase>& it) {
+        return it->id == 2;
+    });
+    std::cout << "Got filtered item: " << item->to_string() << std::endl;
+
+    // Get next available item
+    auto next_item = co_await store.get();
+    std::cout << "Got next item: " << next_item->to_string() << std::endl;
+});
+
+env.schedule(task, "store_example");
+env.run();
 ```
 
 ---

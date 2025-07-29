@@ -264,6 +264,11 @@ void example_8() {
         auto val = co_await store.get(filter);
         std::cout << "[" << env.sim_time << "] Got item with id == "
                   << std::get<std::string>(val) << std::endl;
+
+        std::cout << "[" << env.sim_time << "] Getting next available item (no filter)\n";
+        auto next_val = co_await store.get();
+        std::cout << "[" << env.sim_time << "] Got item: "
+                  << std::get<std::string>(next_val) << std::endl;
     });
 
     env.schedule(test_task, "test_task");

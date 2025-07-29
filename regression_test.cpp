@@ -1,3 +1,4 @@
+
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest/doctest.h"
 #include "csimpy_env.h"
@@ -155,6 +156,26 @@ TEST_CASE("example_patient_flow regression") {
         "[30] patient finishes seeing doctor\n"
         "[50] patient finishes lab test\n"
         "[50] patient signs out\n";
+
+    CHECK_EQ(output, expected);
+}
+
+TEST_CASE("example_8 regression") {
+    std::stringstream buffer;
+    std::streambuf* old = std::cout.rdbuf(buffer.rdbuf());
+
+    example_8();
+
+    std::cout.rdbuf(old);
+    std::string output = buffer.str();
+
+    const char* expected =
+        "[1] Putting Alice\n"
+        "[1] Putting Bob\n"
+        "[1] Getting item with id == 2\n"
+        "[1] Got item with id == StaffItem(Bob, id=2, role=Doctor, skill=3)\n"
+        "[1] Getting next available item (no filter)\n"
+        "[1] Got item: StaffItem(Alice, id=1, role=Nurse, skill=2)\n";
 
     CHECK_EQ(output, expected);
 }
