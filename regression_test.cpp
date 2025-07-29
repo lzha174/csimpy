@@ -41,12 +41,12 @@ TEST_CASE("example_2 regression") {
 
     const char* expected =
         "[5] test_put_first: putting 4\n"
-        "[5] test_put_first: done\n"
+        "[5] test_put_first: done current level 4\n"
         "[6] test_get_second: trying to get 3 current level  4\n"
         "[6] test_get_second: got 3 current level  1\n"
         "[6] test_get_second: trying to get 9 current level  1\n"
         "[10] test_put_first: putting 10\n"
-        "[10] test_put_first: done\n"
+        "[10] test_put_first: done current level 2\n"
         "[10] test_get_second: got 9 current level  2\n";
 
     CHECK_EQ(output, expected);

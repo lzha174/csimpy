@@ -10,6 +10,7 @@ constexpr bool DEBUG_RESOURCE = false;
 // Awaitable for simulating a timed delay
 #include <iostream>
 #include <coroutine>
+#include "csimpy_env.h"
 
 struct ContainerBase {
     virtual void put(int value) = 0;
@@ -112,11 +113,11 @@ struct Container : ContainerBase {
     }
 };
 
-struct ContainerPutEvent {
+struct ContainerPutEventOld {
     Container& container;
     int value;
 
-    ContainerPutEvent(Container& c, int v) : container(c), value(v) {}
+    ContainerPutEventOld(Container& c, int v) : container(c), value(v) {}
 
     bool await_ready() const noexcept {
         return false;
@@ -132,11 +133,34 @@ struct ContainerPutEvent {
     }
 };
 
-struct ContainerGetEvent {
+
+
+
+
+
+struct ContainerPutEvent : SimEventBase {
+    CSimpyEnv& env;
+    Container& container;
+    int value;
+    ContainerPutEvent(CSimpyEnv& env_, Container& c, int v) : env(env_), container(c), value(v) {
+        sim_time = env.sim_time;
+    }
+    bool await_ready() const noexcept {
+        // return false
+        // queue this event
+        return false;
+    };
+    void await_suspend(std::coroutine_handle<> h) const {
+        //container.await_put(h, value);
+        //container.try_wake_put_waiters();
+    }
+};
+
+struct ContainerGetEventOld {
     Container& container;
     int value;
 
-    ContainerGetEvent(Container& c, int v) : container(c), value(v) {}
+    ContainerGetEventOld(Container& c, int v) : container(c), value(v) {}
 
     bool await_ready() const noexcept {
         return false;

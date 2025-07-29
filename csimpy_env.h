@@ -6,6 +6,7 @@
 #include <string>
 
 #include "csimpy_env.h"
+#include "csimpy_env.h"
 
 
 struct AllOfEvent;
@@ -14,6 +15,7 @@ struct CoroutineProcess;
 class SimEvent;
 class Task;
 constexpr bool DEBUG_PRINT_QUEUE = false;
+constexpr bool DEBUG_RESOURCE = false;
 struct SimEventBase {
     int sim_time;
     int delay = 0;
@@ -97,27 +99,27 @@ struct SimEvent : SimEventBase {
         value = val;
     }
 
-    void trigger(int time) {
+    void trigger() {
         for (auto& cb : callbacks) {
-            cb(time);
+            cb(env.sim_time);
         }
         callbacks.clear();
-        done=true; // finished all callbacks..done is true..
     }
 
     void resume() override {
-        trigger(env.sim_time);
+        trigger();
     }
 
     virtual SimEvent* clone_for_schedule() const {
         auto* clone = new SimEvent(env);
         clone->value = value;
-
+        clone->done = done;
         return clone;
     }
 
     // Schedules a heap-allocated copy of this event at the given time and clears callbacks.
     void on_succeed() {
+        done = true;
         SimEvent* heap_event = this->clone_for_schedule();
         heap_event->callbacks = std::move(this->callbacks);
         //heap_event->sim_time = this->sim_time;
@@ -148,8 +150,7 @@ struct TaskPromise {
             void await_suspend(std::coroutine_handle<>) const noexcept {
                 if (promise->completion_event) {
                     promise->completion_event->set_value(std::string("done"));
-                    promise->completion_event->trigger(
-                        promise->completion_event->env.sim_time);
+                    promise->completion_event->on_succeed();
                 }
             }
 
@@ -227,7 +228,9 @@ struct SimDelay : SimEvent {
     }
 
     SimEvent* clone_for_schedule() const override {
-        return new SimDelay(env, delay);
+        auto* clone = new SimDelay(env, delay);
+        clone->done = done;
+        return clone;
     }
 
     void await_suspend(std::coroutine_handle<> h,
@@ -244,7 +247,7 @@ struct SimDelay : SimEvent {
 
     void resume() override {
         if (DEBUG_PRINT_QUEUE) std::cout << "[" << env.sim_time << "] SimDelay resumed.\n";
-        trigger(env.sim_time);
+        trigger();
     }
 };
 // Waits for all of a set of SimEvents to complete, then triggers itself.
@@ -385,3 +388,205 @@ std::shared_ptr<Task> CSimpyEnv::create_task(F&& coroutine_func) {
     active_functors.push_back(func_holder);
     return sp;
 }
+
+
+struct ContainerBase {
+    virtual bool can_put(int value) const = 0;
+    virtual bool can_get(int value) const = 0;
+
+    virtual ~ContainerBase() = default;
+};
+
+struct Container : ContainerBase {
+    CSimpyEnv& env;
+    int level = 0;
+    int capacity;
+    std::vector<std::pair<std::shared_ptr<SimEvent>, int>> get_waiters;
+    std::vector<std::pair<std::shared_ptr<SimEvent>, int>> put_waiters;
+    std::string name;
+
+    Container(CSimpyEnv& e, int cap, std::string n = "") : env(e), capacity(cap), name(std::move(n)) {}
+
+    bool can_put(int value) const override {
+        return level + value <= capacity;
+    }
+    bool can_get(int value) const override {
+        return level >= value;
+    }
+
+    void await_get(std::shared_ptr<SimEvent> get_event, int value) {
+        get_waiters.emplace_back(std::move(get_event), value);
+    }
+
+    void await_put(std::shared_ptr<SimEvent> put_event, int value) {
+        put_waiters.emplace_back(std::move(put_event), value);
+    }
+
+    void trigger_get() {
+        if (DEBUG_RESOURCE) {
+            std::cout << "[" << name << "] 🔍 Get Waiters (before trying):\n";
+            for (const auto& [h, v] : get_waiters) {
+                std::cout << "[" << name << "]   - wants: " << v << "\n";
+            }
+        }
+        for (size_t i = 0; i < get_waiters.size();) {
+            auto& [get_event, v] = get_waiters[i];
+            if (can_get(v)) {
+                if (DEBUG_RESOURCE) {
+                    std::cout << "[" << name << "]   - try get : " << v << "\t"<<"level b4:"<<level<<"\n";
+                }
+                level -= v;
+                if (DEBUG_RESOURCE) {
+                    std::cout << "[" << name << "]   - tre get : " << v << "\t"<<"level after:"<<level<<"\n";
+                }
+                get_event->on_succeed();
+
+                get_waiters.erase(get_waiters.begin() + i);
+            } else {
+                ++i;
+            }
+        }
+    }
+
+    void trigger_put() {
+        if (DEBUG_RESOURCE) {
+            std::cout << "[" << name << "] 🔍 Put Waiters (before trying):\n";
+            for (const auto& [h, v] : put_waiters) {
+                std::cout << "[" << name << "]   - wants to put: " << v << "\n";
+            }
+        }
+        for (size_t i = 0; i < put_waiters.size();) {
+            auto& [put_event, v] = put_waiters[i];
+            if (can_put(v)) {
+                level += v;
+                put_event->on_succeed();
+                put_waiters.erase(put_waiters.begin() + i);
+            } else {
+                ++i;
+            }
+        }
+    }
+};
+
+
+struct ContainerPutEvent : SimEvent {
+    CSimpyEnv& env;
+    Container& container;
+    int value;
+    ContainerPutEvent(CSimpyEnv& env_, Container& c, int v)
+    : SimEvent(env_), env(env_), container(c), value(v) {
+        sim_time = env.sim_time;
+    }
+
+    struct Awaiter {
+        std::shared_ptr<ContainerPutEvent> self;
+
+        bool await_ready() const noexcept { return false; }
+
+        void await_suspend(std::coroutine_handle<> h) {
+            auto keep_alive = self; // make a copy of the shared_ptr
+            // add put to queue
+            self->container.await_put(keep_alive, self->value);
+
+            // Separate callback to trigger gets first
+            self->callbacks.emplace_back([keep_alive](int /*time*/) {
+                keep_alive->container.trigger_get();
+            });
+
+            // Separate callback to resume coroutine
+            self->callbacks.emplace_back([keep_alive, h](int time) {
+                keep_alive->env.schedule(new CoroutineProcess(time, h, "ContainerPut::callback -> "));
+            });
+            self->container.trigger_put();
+        }
+
+        auto await_resume() { return self->value; }
+    };
+
+    auto operator co_await() && {
+        auto ptr = std::make_shared<ContainerPutEvent>(std::move(*this));
+        return Awaiter{ptr};
+    }
+
+
+    void trigger() {
+        for (auto& cb : callbacks) {
+            cb(env.sim_time);
+        }
+        callbacks.clear();
+    }
+
+    void resume() override {
+        trigger();
+    }
+
+    virtual SimEvent* clone_for_schedule() const override {
+        auto* clone = new ContainerPutEvent(env, container, value);
+        clone->callbacks = callbacks;
+        clone->done = done;
+
+        return clone;
+    }
+};
+
+
+
+struct ContainerGetEvent : SimEvent {
+    CSimpyEnv& env;
+    Container& container;
+    int value;
+    ContainerGetEvent(CSimpyEnv& env_, Container& c, int v)
+    : SimEvent(env_), env(env_), container(c), value(v) {
+        sim_time = env.sim_time;
+    }
+
+    struct Awaiter {
+        std::shared_ptr<ContainerGetEvent> self;
+
+        bool await_ready() const noexcept { return false; }
+
+        void await_suspend(std::coroutine_handle<> h) {
+            auto keep_alive = self; // make a copy of the shared_ptr
+            // add put to queue
+            self->container.await_get(keep_alive, self->value);
+
+            // Separate callback to trigger gets first
+            self->callbacks.emplace_back([keep_alive](int /*time*/) {
+                keep_alive->container.trigger_put();
+            });
+
+            // Separate callback to resume coroutine
+            self->callbacks.emplace_back([keep_alive, h](int time) {
+                keep_alive->env.schedule(new CoroutineProcess(time, h, "ContainerGet::callback -> "));
+            });
+            self->container.trigger_get();
+        }
+
+        auto await_resume() { return self->value; }
+    };
+
+    auto operator co_await() && {
+        auto ptr = std::make_shared<ContainerGetEvent>(std::move(*this));
+        return Awaiter{ptr};
+    }
+
+
+    void trigger() {
+        for (auto& cb : callbacks) {
+            cb(env.sim_time);
+        }
+        callbacks.clear();
+    }
+
+    void resume() override {
+        trigger();
+    }
+
+    virtual SimEvent* clone_for_schedule() const override {
+        auto* clone = new ContainerPutEvent(env, container, value);
+        clone->callbacks = callbacks;
+        clone->done = done;
+
+        return clone;
+    }
+};
