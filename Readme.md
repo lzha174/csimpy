@@ -44,6 +44,15 @@ A resource store for holding `ItemBase`-derived objects with limited capacity.
 - `get()` supports filter lambdas to select specific items.
 - Useful for modeling queues of objects such as staff, jobs, or inventory.
 
+---
+
+## 🔍 Features
+
+- Event-driven execution with time advancement
+- Automatic delay handling (`SimDelay`)
+- Coroutine-based task modeling
+- Support for composite events (like `AllOfEvent`)
+- Event queue introspection (`print_event_queue_state()`)
 
 ---
 
@@ -75,48 +84,49 @@ co_await AnyOfEvent{env, {&d1, &d2}};
 
 ### Store Example
 ```cpp
+#include "csimpy_env.h"
 CSimpyEnv env;
+
 Store store(env, 5);
 
-auto task = env.create_task([&env, &store]() -> Task {
-    StaffItem alice("Alice", 1, "Nurse", 2);
-    StaffItem bob("Bob", 2, "Doctor", 3);
+auto task = env.create_task([]() -> Task {
+    StaffItem staff1("Alice", 1, "Nurse", 2);
+    StaffItem staff2("Bob", 2, "Doctor", 3);
 
-    co_await store.put(alice);
-    co_await store.put(bob);
+    std::cout << "[" << env.sim_time << "] Putting Alice\n";
+    co_await store.put(staff1);
+    std::cout << "[" << env.sim_time << "] Putting Bob\n";
+    co_await store.put(staff2);
 
-    // Get by filter (id == 2)
-    auto item = co_await store.get([](const std::shared_ptr<ItemBase>& it) {
-        return it->id == 2;
-    });
-    std::cout << "Got filtered item: " << item->to_string() << std::endl;
+    std::cout << "[" << env.sim_time << "] Getting item with id == 2\n";
+    auto filter = [](const std::shared_ptr<ItemBase>& item) {
+        return item->id == 2;
+    };
+    auto val = co_await store.get(filter);
+    std::cout << "[" << env.sim_time << "] Got item with id == "
+              << std::get<std::string>(val) << std::endl;
 
-    // Get next available item
-    auto next_item = co_await store.get();
-    std::cout << "Got next item: " << next_item->to_string() << std::endl;
+    std::cout << "[" << env.sim_time << "] Getting next available item (no filter)\n";
+    auto next_val = co_await store.get();
+    std::cout << "[" << env.sim_time << "] Got item: "
+              << std::get<std::string>(next_val) << std::endl;
 });
 
-env.schedule(task, "store_example");
-env.run();
+int main() {
+    env.schedule(task, "store_example");
+    env.run();
+};
 ```
 
 ---
 
-## 🔍 Features
+## 🛠️ Workflow Example
 
-- Event-driven execution with time advancement
-- Automatic delay handling (`SimDelay`)
-- Coroutine-based task modeling
-- Support for composite events (like `AllOfEvent`)
-- Event queue introspection (`print_event_queue_state()`)
+Below is a sample usage demonstrating a patient flow with dependent tasks :
 
----
+```
+#include "csimpy_env.h"
 
-## 🛠️ Example
-
-Below is a sample usage demonstrating a simple patient flow with dependent tasks using `SimDelay`, `LabeledAwait`, and `AllOfEvent`:
-
-```cpp
 /**
  * Demonstrates a simple patient flow simulation:
  * 1. Patient registers (10 time units).
@@ -125,41 +135,47 @@ Below is a sample usage demonstrating a simple patient flow with dependent tasks
  * 4. Lab test takes 40 time units.
  * 5. Patient signs out after both tasks are complete.
  */
-CSimpyEnv env;
+void patient_flow() {
+    CSimpyEnv env;
 
-auto register_task = env.create_task([&env]() -> Task {
-    std::cout << "[" << env.sim_time << "] patient starts registration\n";
-    co_await SimDelay(env, 10);
-    std::cout << "[" << env.sim_time << "] patient finishes registration\n";
-});
+    auto register_task = env.create_task([&env]() -> Task {
+        std::cout << "[" << env.sim_time << "] patient starts registration\n";
+        co_await SimDelay(env, 10);
+        std::cout << "[" << env.sim_time << "] patient finishes registration\n";
+    });
 
-auto& reg_event = register_task->get_completion_event(); // capture once
+    auto& reg_event = register_task->get_completion_event(); // capture once
 
-auto see_doctor_task = env.create_task([&env, &reg_event]() -> Task {
-    co_await LabeledAwait{reg_event, "see_doctor"};
-    std::cout << "[" << env.sim_time << "] patient starts seeing doctor\n";
-    co_await SimDelay(env, 20);
-    std::cout << "[" << env.sim_time << "] patient finishes seeing doctor\n";
-});
+    auto see_doctor_task = env.create_task([&env, &reg_event]() -> Task {
+        co_await reg_event;
+        std::cout << "[" << env.sim_time << "] patient starts seeing doctor\n";
+        co_await SimDelay(env, 20);
+        std::cout << "[" << env.sim_time << "] patient finishes seeing doctor\n";
+    });
 
-auto lab_test_task = env.create_task([&env, &reg_event]() -> Task {
-    co_await LabeledAwait{reg_event, "lab_test"};
-    std::cout << "[" << env.sim_time << "] patient starts lab test\n";
-    co_await SimDelay(env, 40);
-    std::cout << "[" << env.sim_time << "] patient finishes lab test\n";
-});
+    auto lab_test_task = env.create_task([&env, &reg_event]() -> Task {
+        co_await reg_event;
+        std::cout << "[" << env.sim_time << "] patient starts lab test\n";
+        co_await SimDelay(env, 40);
+        std::cout << "[" << env.sim_time << "] patient finishes lab test\n";
+    });
 
-auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
-    co_await AllOfEvent(env, {&lab_test_task->get_completion_event(), &see_doctor_task->get_completion_event()});
-    std::cout << "[" << env.sim_time << "] patient signs out\n";
-});
+    auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
+        co_await AllOfEvent(env, {&lab_test_task->get_completion_event(), &see_doctor_task->get_completion_event()});
+        std::cout << "[" << env.sim_time << "] patient signs out\n";
+    });
 
-env.schedule(register_task, "register");
-env.schedule(see_doctor_task, "see_doctor");
-env.schedule(lab_test_task, "lab_test");
-env.schedule(signout_task, "signout");
+    env.schedule(register_task, "register");
+    env.schedule(see_doctor_task, "see_doctor");
+    env.schedule(lab_test_task, "lab_test");
+    env.schedule(signout_task, "signout");
 
-env.run();
+    env.run();
+}
+
+int main() {
+    patient_flow();
+};
 ```
 
 **Output:**
@@ -177,9 +193,6 @@ env.run();
 
 ## 📈 TODO
 
-- Implement SimPy-style Resource and Store primitives
+- Implement SimPy-style Resource with Priority
 - Support process cancellation and interruption
 - For more examples, see `examples.cpp` in the source repository.
-
-
-

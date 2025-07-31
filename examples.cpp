@@ -130,6 +130,7 @@ void example_4() {
  * 2. After registration, doctor and lab test start in parallel (20 and 40 units).
  * 3. Signs out after both are complete.
  */
+
 void example_patient_flow() {
     CSimpyEnv env;
 
@@ -142,21 +143,20 @@ void example_patient_flow() {
     auto& reg_event = register_task->get_completion_event(); // capture once
 
     auto see_doctor_task = env.create_task([&env, &reg_event]() -> Task {
-        co_await LabeledAwait{reg_event, "see_doctor"};
+        co_await reg_event;
         std::cout << "[" << env.sim_time << "] patient starts seeing doctor\n";
         co_await SimDelay(env, 20);
         std::cout << "[" << env.sim_time << "] patient finishes seeing doctor\n";
     });
 
     auto lab_test_task = env.create_task([&env, &reg_event]() -> Task {
-        co_await LabeledAwait{reg_event, "lab_test"};
+        co_await reg_event;
         std::cout << "[" << env.sim_time << "] patient starts lab test\n";
         co_await SimDelay(env, 40);
         std::cout << "[" << env.sim_time << "] patient finishes lab test\n";
     });
 
     auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
-        auto  x =3;
         co_await AllOfEvent(env, {&lab_test_task->get_completion_event(), &see_doctor_task->get_completion_event()});
         std::cout << "[" << env.sim_time << "] patient signs out\n";
     });
@@ -185,6 +185,7 @@ void example_5() {
     env.schedule(proc_any_wait, "proc_any_wait");
     env.run();
 }
+
 
 /**
  * Example 6:
