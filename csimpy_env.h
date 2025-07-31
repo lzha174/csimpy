@@ -4,9 +4,8 @@
 #include <functional>
 #include <iostream>
 #include <string>
-
-#include "csimpy_env.h"
-#include "csimpy_env.h"
+#include <unordered_map>
+#include <atomic>
 
 
 struct AllOfEvent;
@@ -19,7 +18,7 @@ struct ContainerPutEvent;
 struct ContainerGetEvent;
 constexpr bool DEBUG_PRINT_QUEUE = false;
 constexpr bool DEBUG_RESOURCE = false;
-
+constexpr bool DEBUG_MEMORY = false;
 // Base struct for items in Store
 struct ItemBase {
     std::string name;
@@ -41,8 +40,28 @@ struct ItemBase {
 struct SimEventBase {
     int sim_time;
     int delay = 0;
+    static inline std::atomic<size_t> alloc_counter{0};
+    static inline std::unordered_map<void*, size_t> alloc_map;
     virtual void resume() = 0;
     virtual ~SimEventBase() = default;
+    void* operator new(std::size_t sz) {
+        void* p = std::malloc(sz);
+        size_t id = ++alloc_counter;
+        alloc_map[p] = id;
+        if constexpr (DEBUG_MEMORY) {
+            std::cout << "[ALLOC] id=" << id << " size=" << sz << " bytes\n";
+        }
+        return p;
+    }
+    void operator delete(void* p) noexcept {
+        auto it = alloc_map.find(p);
+        size_t id = (it != alloc_map.end()) ? it->second : 0;
+        if constexpr (DEBUG_MEMORY) {
+            std::cout << "[FREE] id=" << id << "\n";
+        }
+        alloc_map.erase(p);
+        std::free(p);
+    }
 };
 
 
@@ -270,7 +289,9 @@ struct SimDelay : SimEvent {
     }
 
     void resume() override {
-        if (DEBUG_PRINT_QUEUE) std::cout << "[" << env.sim_time << "] SimDelay resumed.\n";
+        if constexpr (DEBUG_PRINT_QUEUE) {
+            std::cout << "[" << env.sim_time << "] SimDelay resumed.\n";
+        }
         trigger();
     }
 };

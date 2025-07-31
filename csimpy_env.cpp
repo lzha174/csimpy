@@ -23,6 +23,9 @@ void CSimpyEnv::run() {
         delete ev; // normal event can be deleted immediately
 
     }
+    if (!SimEventBase::alloc_map.empty()) {
+        std::cerr << "⚠️ Leaked events: " << SimEventBase::alloc_map.size() << "\n";
+    }
 }
 
 
