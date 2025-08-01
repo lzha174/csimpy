@@ -6,6 +6,10 @@
 #include <string>
 #include <unordered_map>
 #include <atomic>
+#include <algorithm>
+
+// Priority enum for store events
+enum class Priority { Low = 0, High = 1 };
 
 
 struct AllOfEvent;
@@ -696,8 +700,8 @@ struct Store {
     void trigger_put();
     void trigger_get();
 
-    auto put(ItemBase& item);
-    auto get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter = {});
+    auto put(ItemBase& item, Priority priority = Priority::Low);
+    auto get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter = {}, Priority priority = Priority::Low);
 
 
 
@@ -708,9 +712,10 @@ struct StorePutEvent : SimEvent {
     CSimpyEnv& env;
     Store& store;
     std::shared_ptr<ItemBase> item;
+    Priority priority;
 
-    StorePutEvent(CSimpyEnv& env_, Store& s, std::shared_ptr<ItemBase> it)
-        : SimEvent(env_), env(env_), store(s), item(std::move(it)) {
+    StorePutEvent(CSimpyEnv& env_, Store& s, std::shared_ptr<ItemBase> it, Priority prio = Priority::Low)
+        : SimEvent(env_), env(env_), store(s), item(std::move(it)), priority(prio) {
         sim_time = env.sim_time;
     }
 
@@ -746,7 +751,7 @@ struct StorePutEvent : SimEvent {
     void resume() override { trigger(); }
 
     SimEvent* clone_for_schedule() const override {
-        auto* clone = new StorePutEvent(env, store, item);
+        auto* clone = new StorePutEvent(env, store, item, priority);
         clone->callbacks = callbacks;
         clone->done = done;
         return clone;
@@ -757,10 +762,11 @@ struct StorePutEvent : SimEvent {
 struct StoreGetEvent : SimEvent {
     CSimpyEnv& env;
     Store& store;
+    Priority priority;
 
     StoreGetEvent(CSimpyEnv& env_, Store& s,
-                  std::function<bool(const std::shared_ptr<ItemBase>&)> filter = {})
-        : SimEvent(env_), env(env_), store(s) {
+                  std::function<bool(const std::shared_ptr<ItemBase>&)> filter = {}, Priority prio = Priority::Low)
+        : SimEvent(env_), env(env_), store(s), priority(prio) {
         sim_time = env.sim_time;
         item_filter = std::move(filter);
     }
@@ -798,7 +804,7 @@ struct StoreGetEvent : SimEvent {
     void resume() override { trigger(); }
 
     SimEvent* clone_for_schedule() const override {
-        auto* clone = new StoreGetEvent(env, store, item_filter);
+        auto* clone = new StoreGetEvent(env, store, item_filter, priority);
         clone->callbacks = callbacks;
         clone->done = done;
         return clone;
@@ -806,15 +812,14 @@ struct StoreGetEvent : SimEvent {
 };
 
 // Inline definition for Store::put
-inline auto Store::put(ItemBase& item) {
+inline auto Store::put(ItemBase& item, Priority priority) {
     auto ptr = std::shared_ptr<ItemBase>(item.clone());
-    return StorePutEvent(env, *this, std::move(ptr));
+    return StorePutEvent(env, *this, std::move(ptr), priority);
 }
 
-
 // Inline definition for Store::get
-inline auto Store::get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter) {
-    return StoreGetEvent(env, *this, std::move(filter));
+inline auto Store::get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter, Priority priority) {
+    return StoreGetEvent(env, *this, std::move(filter), priority);
 }
 
 
@@ -828,6 +833,10 @@ inline void Store::await_get(std::shared_ptr<StoreGetEvent> get_event) {
 }
 
 inline void Store::trigger_put() {
+    std::sort(put_waiters.begin(), put_waiters.end(),
+        [](const std::shared_ptr<StorePutEvent>& a, const std::shared_ptr<StorePutEvent>& b) {
+            return static_cast<int>(a->priority) > static_cast<int>(b->priority);
+        });
     for (size_t i = 0; i < put_waiters.size();) {
         auto& evt = put_waiters[i];
         if (can_put()) {
@@ -841,6 +850,10 @@ inline void Store::trigger_put() {
 }
 
 inline void Store::trigger_get() {
+    std::sort(get_waiters.begin(), get_waiters.end(),
+        [](const std::shared_ptr<StoreGetEvent>& a, const std::shared_ptr<StoreGetEvent>& b) {
+            return static_cast<int>(a->priority) > static_cast<int>(b->priority);
+        });
     for (size_t i = 0; i < get_waiters.size();) {
         auto& evt = get_waiters[i];
         auto it = std::find_if(items.begin(), items.end(),

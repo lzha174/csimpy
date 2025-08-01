@@ -275,3 +275,38 @@ void example_8() {
     env.schedule(test_task, "test_task");
     env.run();
 }
+
+/**
+ * Example: Demonstrates Store usage with priority put/get.
+ */
+void example_priority_store() {
+    CSimpyEnv env;
+    Store store(env, 2, "priority_store");
+
+    auto producer = env.create_task([&env, &store]() -> Task {
+        co_await SimDelay(env, 10); // wait before putting
+        StaffItem s1("A", 1, "Tech", 1);
+        StaffItem s2("B", 2, "Tech", 1);
+        std::cout << "[" << env.sim_time << "] producer: putting two items\n";
+        co_await store.put(s1);
+        co_await store.put(s2);
+    });
+
+    auto low_getter = env.create_task([&env, &store]() -> Task {
+        std::cout << "[" << env.sim_time << "] low_getter: trying to get low priority item immediately\n";
+        auto val = co_await store.get({}, Priority::Low);
+        std::cout << "[" << env.sim_time << "] low_getter: got " << std::get<std::string>(val) << "\n";
+    });
+
+    auto high_getter = env.create_task([&env, &store]() -> Task {
+        co_await SimDelay(env, 5);
+        std::cout << "[" << env.sim_time << "] high_getter: trying to get high priority item at time 5\n";
+        auto val = co_await store.get({}, Priority::High);
+        std::cout << "[" << env.sim_time << "] high_getter: got " << std::get<std::string>(val) << "\n";
+    });
+
+    env.schedule(producer, "producer");
+    env.schedule(low_getter, "low_getter");
+    env.schedule(high_getter, "high_getter");
+    env.run();
+}
