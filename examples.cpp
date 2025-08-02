@@ -317,6 +317,7 @@ void example_priority_store() {
 // Initial 4 cars arrive at time 0; then 5 additional cars arrive every 5 units.
 // Service (wash) time is fixed at 10 units. FIFO queuing is used so waiting cars
 // are served in arrival order. Logs arrival, entry, and exit times.
+// Check carwash.py for equivalent simpy code.
 void example_carwash_with_container() {
     CSimpyEnv env;
     // Use Container as machines with capacity 2
@@ -351,5 +352,85 @@ void example_carwash_with_container() {
         }
     });
     env.schedule(producer, "producer");
+    env.run();
+}
+
+
+/**
+ * Simplified Gas Station example.
+ * - Pumps: Container with capacity 2 (two simultaneous users).
+ * - Fuel tank: Container with capacity 10, initially full.
+ * - Two cars arrive deterministically: Car 0 at time 0, Car 1 at time 5. Each consumes 8 units of fuel.
+ * - Every 8 time units a monitor checks the fuel tank; if its level is < 8, it schedules a tank truck
+ *   to arrive in 3 units and refill the tank to full.
+ *   check gas_statoin.py for mirrior simpy code.
+ */
+void example_gas_station() {
+    CSimpyEnv env;
+
+    // Pumps and fuel tank
+    Container pumps(env, 2, "pumps");
+    pumps.set_level(2);  // two pumps available
+    Container fuel_tank(env, 10, "fuel_tank");
+    fuel_tank.set_level(10); // start full
+
+    const int CAR_FUEL_NEED = 8;
+    const int CAR_ARRIVAL_INTERVAL = 5;
+    const int CHECK_INTERVAL = 8;
+    const int REFUEL_DELAY = 3;
+    const int LOW_THRESHOLD = 8;
+    const int NUM_CARS = 2;
+
+    // Car process
+    auto make_car = [&](const std::string& name, int index) {
+        return env.create_task([&env, &pumps, &fuel_tank, name, index]() -> Task {
+            co_await SimDelay(env, index * CAR_ARRIVAL_INTERVAL);
+            std::cout << "[" << env.sim_time << "] " << name << " arrives at the gas station\n";
+
+            // Acquire pump
+            co_await pumps.get(1);
+            std::cout << "[" << env.sim_time << "] " << name << " acquired a pump\n";
+
+            // Take fuel
+            co_await fuel_tank.get(CAR_FUEL_NEED);
+            std::cout << "[" << env.sim_time << "] " << name << " refueled with " << CAR_FUEL_NEED << " units\n";
+
+            // Release pump
+            co_await pumps.put(1);
+            std::cout << "[" << env.sim_time << "] " << name << " left the gas station\n";
+        });
+    };
+
+    // Fuel monitor + truck
+    auto tank_truck = [&]() {
+        return env.create_task([&env, &fuel_tank]() -> Task {
+            co_await SimDelay(env, REFUEL_DELAY); // arrives REFUEL_DELAY after scheduled
+            int amount = fuel_tank.capacity - fuel_tank.level;
+            co_await fuel_tank.put(amount);
+            std::cout << "[" << env.sim_time << "] Tank truck arrived and refilled station with "
+                      << amount << " units\n";
+            co_return;
+        });
+    };
+
+    auto monitor = env.create_task([&env, &fuel_tank, &tank_truck]() -> Task {
+        while (true) {
+            co_await SimDelay(env, CHECK_INTERVAL);
+            if (fuel_tank.level < LOW_THRESHOLD) {
+                std::cout << "[" << env.sim_time << "] Fuel low (level=" << fuel_tank.level
+                          << "), scheduling truck in " << REFUEL_DELAY << "\n";
+                // schedule truck after REFUEL_DELAY
+                env.schedule(tank_truck(), "tank_truck");
+            }
+        }
+    });
+
+    // Schedule cars
+    for (int i = 0; i < NUM_CARS; ++i) {
+        std::string name = "Car " + std::to_string(i);
+        env.schedule(make_car(name, i), name);
+    }
+    env.schedule(monitor, "fuel_monitor");
+
     env.run();
 }
