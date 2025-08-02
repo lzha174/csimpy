@@ -179,3 +179,44 @@ TEST_CASE("example_8 regression") {
 
     CHECK_EQ(output, expected);
 }
+
+TEST_CASE("example_carwash regression") {
+    std::stringstream buffer;
+    std::streambuf* old = std::cout.rdbuf(buffer.rdbuf());
+
+    example_carwash_with_container();
+
+    std::cout.rdbuf(old);
+    std::string output = buffer.str();
+
+    const char* expected =
+        "[0] Car 0 arrives at the carwash.\n"
+        "[0] Car 1 arrives at the carwash.\n"
+        "[0] Car 2 arrives at the carwash.\n"
+        "[0] Car 3 arrives at the carwash.\n"
+        "[0] Car 0 enters the carwash.\n"
+        "[0] Car 1 enters the carwash.\n"
+        "[5] Car 4 arrives at the carwash.\n"
+        "[10] Car 0 leaves the carwash.\n"
+        "[10] Car 1 leaves the carwash.\n"
+        "[10] Car 5 arrives at the carwash.\n"
+        "[10] Car 2 enters the carwash.\n"
+        "[10] Car 3 enters the carwash.\n"
+        "[15] Car 6 arrives at the carwash.\n"
+        "[20] Car 2 leaves the carwash.\n"
+        "[20] Car 3 leaves the carwash.\n"
+        "[20] Car 7 arrives at the carwash.\n"
+        "[20] Car 4 enters the carwash.\n"
+        "[20] Car 5 enters the carwash.\n"
+        "[25] Car 8 arrives at the carwash.\n"
+        "[30] Car 4 leaves the carwash.\n"
+        "[30] Car 5 leaves the carwash.\n"
+        "[30] Car 6 enters the carwash.\n"
+        "[30] Car 7 enters the carwash.\n"
+        "[40] Car 6 leaves the carwash.\n"
+        "[40] Car 7 leaves the carwash.\n"
+        "[40] Car 8 enters the carwash.\n"
+        "[50] Car 8 leaves the carwash.\n";
+
+    CHECK_EQ(output, expected);
+}

@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <atomic>
 #include <algorithm>
+#include <cassert>
 
 // Priority enum for store events
 enum class Priority { Low = 0, High = 1 };
@@ -44,8 +45,11 @@ struct ItemBase {
 struct SimEventBase {
     int sim_time;
     int delay = 0;
+    size_t unique_id;
+    static inline std::atomic<size_t> uid_gen{0};
     static inline std::atomic<size_t> alloc_counter{0};
     static inline std::unordered_map<void*, size_t> alloc_map;
+    SimEventBase() : unique_id(++uid_gen) {}
     virtual void resume() = 0;
     virtual ~SimEventBase() = default;
     void* operator new(std::size_t sz) {
@@ -71,7 +75,10 @@ struct SimEventBase {
 
 struct CompareSimEvent {
     bool operator()(const SimEventBase* a, const SimEventBase* b) {
-        return a->sim_time > b->sim_time;
+        if (a->sim_time != b->sim_time)
+            return a->sim_time > b->sim_time; // later time loses
+        // tie break: use unique_id so older (smaller) wins
+        return a->unique_id > b->unique_id;
     }
 };
 class CSimpyEnv {
@@ -474,6 +481,8 @@ struct Container : ContainerBase {
         put_waiters.emplace_back(std::move(put_event), value);
     }
 
+    // Set/get for label (existing methods)
+
     void trigger_get() {
         if (DEBUG_RESOURCE) {
             std::cout << "[" << name << "] 🔍 Get Waiters (before trying):\n";
@@ -518,6 +527,10 @@ struct Container : ContainerBase {
             }
         }
     }
+
+    // Set/get for level
+    void set_level(int l) { assert(l >= 0 && l <= capacity); level = l; }
+    int get_level() const { return level; }
 };
 
 

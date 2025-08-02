@@ -1,5 +1,5 @@
 #include "examples.h"
 
 int main() {
-    example_priority_store();
+    example_carwash_with_container();
 };

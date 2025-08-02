@@ -310,3 +310,46 @@ void example_priority_store() {
     env.schedule(high_getter, "high_getter");
     env.run();
 }
+
+
+
+// Carwash example using Container as machines (capacity=2).
+// Initial 4 cars arrive at time 0; then 5 additional cars arrive every 5 units.
+// Service (wash) time is fixed at 10 units. FIFO queuing is used so waiting cars
+// are served in arrival order. Logs arrival, entry, and exit times.
+void example_carwash_with_container() {
+    CSimpyEnv env;
+    // Use Container as machines with capacity 2
+    Container carwash(env, 2, "carwash_container");
+    carwash.set_level(2);
+    auto car_request = [&](const std::string& name) {
+        return env.create_task([&env, &carwash, name]() -> Task {
+            std::cout << "[" << env.sim_time << "] " << name << " arrives at the carwash." << std::endl;
+            co_await carwash.get(1);
+            std::cout << "[" << env.sim_time << "] " << name << " enters the carwash." << std::endl;
+            co_await SimDelay(env, 10);
+            std::cout << "[" << env.sim_time << "] " << name << " leaves the carwash." << std::endl;
+            co_await carwash.put(1);
+            co_return;
+        });
+    };
+
+
+    // initial 4 cars
+    for (int i = 0; i < 4; ++i) {
+        std::string name = "Car " + std::to_string(i);
+        env.schedule(car_request(name), name);
+    }
+
+    // Producer task: spawn 5 extra cars at intervals
+    auto producer = env.create_task([&env, &car_request]() -> Task {
+        int count = 4;
+        for (int i = 0; i < 5; ++i) {
+            co_await SimDelay(env, 5); // arrival every 5 units
+            std::string name = "Car " + std::to_string(count++);
+            env.schedule(car_request(name), name);
+        }
+    });
+    env.schedule(producer, "producer");
+    env.run();
+}
