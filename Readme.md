@@ -42,6 +42,7 @@ A resource store for holding `ItemBase`-derived objects with limited capacity.
 - Supports `put()` and `get()` operations using `co_await`.
 - Items are managed as `std::shared_ptr<ItemBase>`.
 - `get()` supports filter lambdas to select specific items.
+- Both `put` and `get` now accept a `Priority` (e.g., `Priority::High` / `Priority::Low`) and higher priority waiters are serviced first. 
 - Useful for modeling queues of objects such as staff, jobs, or inventory.
 
 ---
@@ -124,7 +125,7 @@ int main() {
 
 Below is a sample usage demonstrating a patient flow with dependent tasks :
 
-```
+```cpp
 #include "csimpy_env.h"
 
 /**
@@ -193,6 +194,5 @@ int main() {
 
 ## 📈 TODO
 
-- Implement SimPy-style Resource with Priority
 - Support process cancellation and interruption
 - For more examples, see `examples.cpp` in the source repository.
