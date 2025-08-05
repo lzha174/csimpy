@@ -6,6 +6,7 @@ Simplified Gas Station example.
 - Every 8 time units, a monitor checks the fuel tank; if level < 8, it schedules a tank truck to arrive in 3 units and refill the tank to full.
 """
 
+
 import simpy
 
 PUMP_CAPACITY = 2
@@ -16,6 +17,8 @@ CHECK_INTERVAL = 8
 REFUEL_TRUCK_DELAY = 3
 LOW_THRESHOLD = 8
 NUM_CARS = 2
+
+MAX_TIME = 50
 
 
 def car(name, env, pumps, fuel_tank):
@@ -33,11 +36,12 @@ def car(name, env, pumps, fuel_tank):
 
 
 def fuel_monitor(env, fuel_tank):
-    while True:
+    while env.now <= MAX_TIME:
         yield env.timeout(CHECK_INTERVAL)
         if fuel_tank.level < LOW_THRESHOLD:
             print(f"[{env.now}] Fuel low (level={fuel_tank.level}), scheduling truck in {REFUEL_TRUCK_DELAY}")
             env.process(tank_truck(env, fuel_tank))
+    return
 
 
 def tank_truck(env, fuel_tank):
@@ -59,7 +63,7 @@ def main():
     for i in range(NUM_CARS):
         env.process(car(f"Car {i}", env, pumps, fuel_tank))
 
-    env.run()
+    env.run(until=MAX_TIME)
 
 
 if __name__ == "__main__":

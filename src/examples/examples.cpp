@@ -1,7 +1,8 @@
-#include "examples.h"
-#include "csimpy_env.h" // or whatever core sim headers you use
-//#include "csimpy_container.h"
-
+#include "../../include/examples/simsettings.h"
+#include "../../include/examples/examples.h"
+#include "../../include/csimpy/csimpy_env.h"
+#include "../../include/examples/staffitem.h"
+#include "../../include/examples/EDstaff.h"
 
 /**
  * Example 1:
@@ -43,6 +44,7 @@ void example_1() {
 
     env.run();
 }
+
 /**
  * Example 2:
  * Demonstrates Container usage with put and get operations.
@@ -263,13 +265,16 @@ void example_8() {
             return item->id == 2;
         };
         auto val = co_await store.get(filter);
-        std::cout << "[" << env.sim_time << "] Got item with id == "
-                  << std::get<std::string>(val) << std::endl;
+        {
+
+            std::cout << "[" << env.sim_time << "] Got item with id == " << val->to_string() << std::endl;
+        }
 
         std::cout << "[" << env.sim_time << "] Getting next available item (no filter)\n";
         auto next_val = co_await store.get();
-        std::cout << "[" << env.sim_time << "] Got item: "
-                  << std::get<std::string>(next_val) << std::endl;
+        {
+            std::cout << "[" << env.sim_time << "] Got item: " << next_val->to_string() << std::endl;
+        }
     });
 
     env.schedule(test_task, "test_task");
@@ -295,14 +300,14 @@ void example_priority_store() {
     auto low_getter = env.create_task([&env, &store]() -> Task {
         std::cout << "[" << env.sim_time << "] low_getter: trying to get low priority item immediately\n";
         auto val = co_await store.get({}, Priority::Low);
-        std::cout << "[" << env.sim_time << "] low_getter: got " << std::get<std::string>(val) << "\n";
+        std::cout << "[" << env.sim_time << "] low_getter: got " << val->to_string() << "\n";
     });
 
     auto high_getter = env.create_task([&env, &store]() -> Task {
         co_await SimDelay(env, 5);
         std::cout << "[" << env.sim_time << "] high_getter: trying to get high priority item at time 5\n";
         auto val = co_await store.get({}, Priority::High);
-        std::cout << "[" << env.sim_time << "] high_getter: got " << std::get<std::string>(val) << "\n";
+        std::cout << "[" << env.sim_time << "] high_getter: got " <<val->to_string() << "\n";
     });
 
     env.schedule(producer, "producer");
@@ -414,23 +419,124 @@ void example_gas_station() {
     };
 
     auto monitor = env.create_task([&env, &fuel_tank, &tank_truck]() -> Task {
-        while (true) {
+        const int MAX_TIME = 50; // or configurable
+        while (env.sim_time <= MAX_TIME) {
             co_await SimDelay(env, CHECK_INTERVAL);
             if (fuel_tank.level < LOW_THRESHOLD) {
                 std::cout << "[" << env.sim_time << "] Fuel low (level=" << fuel_tank.level
                           << "), scheduling truck in " << REFUEL_DELAY << "\n";
-                // schedule truck after REFUEL_DELAY
                 env.schedule(tank_truck(), "tank_truck");
             }
         }
     });
-
     // Schedule cars
     for (int i = 0; i < NUM_CARS; ++i) {
         std::string name = "Car " + std::to_string(i);
         env.schedule(make_car(name, i), name);
     }
     env.schedule(monitor, "fuel_monitor");
+
+    env.run();
+}
+
+// Demonstrates adding shifts to EDStaff and printing them with simulation time offsets.
+// Example: assign “break tokens” (capacity 2) to staff during their breaks.
+// A shared Store of capacity 2 models limited break slots. For each staff and each break:
+//   * wait until the break start (by co_awaiting a SimDelay to that offset),
+//   * co_await store.get(...) with a filter on staff name to acquire a slot,
+//   * stay in break for its duration (SimDelay),
+//   * then co_await store.put(...) to release the slot.
+void example_staff_shifts() {
+    using namespace std::chrono;
+
+    // Simulation start: Aug 4 2025 00:00
+    SimSettings settings(make_time(2025, 8, 4, 0, 0));
+    std::cout << "Simulation reference start: " << settings.current_time_str(0) << "\n";
+
+    // Create staff and assign shifts/breaks exactly like before
+    EDStaff john("John", 1);
+    EDStaff mike("Mike", 2);
+    std::vector<Shift> john_shifts = {
+        Shift{make_time(2025, 8, 4, 0, 0), make_time(2025, 8, 4, 2, 0)},
+        Shift{make_time(2025, 8, 4, 9, 0), make_time(2025, 8, 4, 16, 0)},
+        Shift{make_time(2025, 8, 5, 0, 0), make_time(2025, 8, 5, 2, 0)},
+        Shift{make_time(2025, 8, 5, 9, 0), make_time(2025, 8, 5, 16, 0)}
+    };
+    std::vector<Shift> mike_shifts = {
+        Shift{make_time(2025, 8, 4, 0, 0), make_time(2025, 8, 4, 2, 0)},
+        Shift{make_time(2025, 8, 4, 9, 0), make_time(2025, 8, 4, 16, 0)},
+        Shift{make_time(2025, 8, 5, 0, 0), make_time(2025, 8, 5, 2, 0)},
+        Shift{make_time(2025, 8, 5, 9, 0), make_time(2025, 8, 5, 16, 0)}
+    };
+    john.add_shifts(john_shifts);
+    mike.add_shifts(mike_shifts);
+    john.update_breaks(settings.start_time);
+    mike.update_breaks(settings.start_time);
+
+    // Store modeling break slots, capacity 2
+    CSimpyEnv env;
+    Store break_store(env, 2, "break_store");
+    auto init_slots = env.create_task([&env, &break_store, &john, &mike]() -> Task {
+        // put initial staff into break_store using co_await
+        co_await break_store.put(john);
+        co_await break_store.put(mike);
+        break_store.print_items();
+    });
+    env.schedule(init_slots, "init_break_slots");
+
+    // Helper to create a break task for a given staff and break shift
+    auto make_break_task = [&](EDStaff& staff, const Shift& brk) {
+        return env.create_task([&env, &break_store, &staff, brk, &settings]() -> Task {
+            // Wait until break start relative to simulation start
+            int wait_minutes = settings.minutes_from_start(brk.start);
+            if (wait_minutes > 0) {
+                co_await SimDelay(env, wait_minutes);
+            }
+
+            {
+                auto start_str = format_time(brk.start);
+                auto end_str = format_time(brk.end);
+                std::cout << "[" << settings.current_time_str(env.sim_time) << "] " << staff.name << " request break: "
+                          << start_str << " - " << end_str << "\n";
+            }
+
+            // Acquire a break slot: filter doesn't need to check name here since tokens are generic,
+            // but if you want to tie token to staff name you can include that logic.
+            auto filter = [&](const std::shared_ptr<ItemBase>& item) {
+                return item->name == staff.name;
+            };
+            auto val = co_await break_store.get(filter);
+
+            std::cout << "[" << settings.current_time_str(env.sim_time) << "] " << staff.name << " acquired break slot\n";
+
+            // verify break started at expected time
+            int expected_start = settings.minutes_from_start(brk.start);
+            if (env.sim_time != expected_start) {
+                std::cerr << "Warning: break start mismatch for " << staff.name << ": expected " << expected_start << " but got " << env.sim_time << "\n";
+            }
+            assert(env.sim_time == expected_start && "Break did not start at expected simulation time");
+
+            // Stay on break for duration
+            int break_duration = static_cast<int>(
+                duration_cast<minutes>(brk.end - brk.start).count());
+            if (break_duration > 0) {
+                co_await SimDelay(env, break_duration);
+            }
+            // release the slot back
+            co_await break_store.put(val);
+            std::cout << "[" << settings.current_time_str(env.sim_time) << "] " << staff.name << " end break\n";
+        });
+    };
+
+    // Schedule break tasks for all staff breaks
+    int john_idx = 0;
+    for (const auto& br : john.get_breaks()) {
+        env.schedule(make_break_task(john, br), "john_break_" + std::to_string(john_idx++));
+    }
+    int mike_idx = 0;
+    for (const auto& br : mike.get_breaks()) {
+        env.schedule(make_break_task(mike, br), "mike_break_" + std::to_string(mike_idx++));
+    }
 
     env.run();
 }

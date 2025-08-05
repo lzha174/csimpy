@@ -1,4 +1,4 @@
-#include "csimpy_env.h"
+#include "../../include/csimpy/csimpy_env.h"
 #include <iostream>
 
 void CSimpyEnv::schedule(SimEventBase* e) {

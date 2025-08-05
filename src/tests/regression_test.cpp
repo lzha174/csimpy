@@ -1,8 +1,8 @@
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest/doctest.h"
-#include "csimpy_env.h"
-#include "examples.h"
+#include "../../include/csimpy/csimpy_env.h"
+#include "../../include//examples/examples.h"
 #include <sstream>
 #include <iostream>
 

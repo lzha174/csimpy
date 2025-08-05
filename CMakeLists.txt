@@ -9,13 +9,13 @@ set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=address")
 
 # Source files used by both executables
 set(CSIMPY_SOURCES
-        csimpy_env.cpp
-        examples.cpp
+        src/csimpy/csimpy_env.cpp
+        src/examples/examples.cpp
 )
 
 # ---- Main executable ----
 add_executable(csimpy_main
-        main.cpp
+        src/main.cpp
         ${CSIMPY_SOURCES}
 )
 
@@ -26,7 +26,7 @@ add_executable(csimpy_play
 
 # ---- Regression test executable ----
 add_executable(csimpy_tests
-        regression_test.cpp
+        src/tests/regression_test.cpp
         ${CSIMPY_SOURCES}
 )
 

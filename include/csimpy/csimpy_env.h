@@ -8,6 +8,9 @@
 #include <atomic>
 #include <algorithm>
 #include <cassert>
+#include <memory>
+#include <type_traits>
+#include "itembase.h"
 
 // Priority enum for store events
 enum class Priority { Low = 0, High = 1 };
@@ -24,22 +27,7 @@ struct ContainerGetEvent;
 constexpr bool DEBUG_PRINT_QUEUE = false;
 constexpr bool DEBUG_RESOURCE = false;
 constexpr bool DEBUG_MEMORY = false;
-// Base struct for items in Store
-struct ItemBase {
-    std::string name;
-    int id;
 
-    explicit ItemBase(std::string n, int i)
-        : name(std::move(n)), id(i) {}
-
-    virtual ~ItemBase() = default;
-
-    virtual std::string to_string() const {
-        return "Item(" + name + ", id=" + std::to_string(id) + ")";
-    }
-
-    virtual ItemBase* clone() const = 0;
-};
 
 
 struct SimEventBase {
@@ -113,7 +101,7 @@ struct CoroutineProcess : SimEventBase {
 };
 
 struct SimEvent : SimEventBase {
-    std::variant<std::monostate, int, std::string> value;
+    std::shared_ptr<ItemBase> value;
     CSimpyEnv& env;
     std::vector<std::function<void(int)>> callbacks;
     bool done = false;
@@ -143,14 +131,9 @@ struct SimEvent : SimEventBase {
 
     template<typename T>
     void set_value(T val) {
-        static_assert(
-            std::disjunction_v<
-                std::is_same<T, int>,
-                std::is_same<T, std::string>
-            >,
-            "SimEvent::set_value() only accepts int or std::string"
-        );
-        value = val;
+        static_assert(std::is_convertible_v<T, std::shared_ptr<ItemBase>>,
+                      "Unsupported type for set_value");
+        value = std::move(val);
     }
 
     void trigger() {
@@ -201,9 +184,11 @@ struct TaskPromise {
             TaskPromise* promise;
 
             bool await_ready() noexcept { return false; }
-            void await_suspend(std::coroutine_handle<>) const noexcept {
+           void await_suspend(std::coroutine_handle<>) const noexcept {
                 if (promise->completion_event) {
-                    promise->completion_event->set_value(std::string("done"));
+                    // Signal completion with a FinishItem
+                    auto finish_item = std::make_shared<FinishItem>();
+                    promise->completion_event->set_value(finish_item);
                     promise->completion_event->on_succeed();
                 }
             }
@@ -668,24 +653,6 @@ inline auto Container::get(int value) {
 
 
 
-// Derived struct for staff items
-struct StaffItem : ItemBase {
-    std::string role;
-    int skill_level;
-
-    StaffItem(std::string n, int i, std::string r, int skill)
-        : ItemBase(std::move(n), i), role(std::move(r)), skill_level(skill) {}
-
-    std::string to_string() const override {
-        return "StaffItem(" + name + ", id=" + std::to_string(id) +
-               ", role=" + role + ", skill=" + std::to_string(skill_level) + ")";
-    }
-
-    ItemBase* clone() const override {
-        return new StaffItem(*this);
-    }
-};
-
 struct StorePutEvent;
 struct StoreGetEvent;
 // Store struct similar to Container but for ItemBase objects
@@ -712,8 +679,10 @@ struct Store {
     void await_get(std::shared_ptr<StoreGetEvent> get_event);
     void trigger_put();
     void trigger_get();
+    void print_items() const;
 
-    auto put(ItemBase& item, Priority priority = Priority::Low);
+    auto put(ItemBase& item, Priority priority = Priority::Low); // clone overload
+    auto put(std::shared_ptr<ItemBase> item, Priority priority = Priority::Low); // take ownership overload
     auto get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter = {}, Priority priority = Priority::Low);
 
 
@@ -730,6 +699,7 @@ struct StorePutEvent : SimEvent {
     StorePutEvent(CSimpyEnv& env_, Store& s, std::shared_ptr<ItemBase> it, Priority prio = Priority::Low)
         : SimEvent(env_), env(env_), store(s), item(std::move(it)), priority(prio) {
         sim_time = env.sim_time;
+
     }
 
     struct Awaiter {
@@ -749,7 +719,6 @@ struct StorePutEvent : SimEvent {
                 keep_alive->env.schedule(
                     new CoroutineProcess(t, h, "StorePut::callback -> "));
             });
-
             self->store.trigger_put();
         }
 
@@ -802,8 +771,8 @@ struct StoreGetEvent : SimEvent {
                 keep_alive->env.schedule(
                     new CoroutineProcess(t, h, "StoreGet::callback -> "));
             });
-
             self->store.trigger_get();
+
         }
 
         auto await_resume() { return self->value; }
@@ -828,6 +797,11 @@ struct StoreGetEvent : SimEvent {
 inline auto Store::put(ItemBase& item, Priority priority) {
     auto ptr = std::shared_ptr<ItemBase>(item.clone());
     return StorePutEvent(env, *this, std::move(ptr), priority);
+}
+
+// new overload: take ownership directly, no clone
+inline auto Store::put(std::shared_ptr<ItemBase> item, Priority priority) {
+    return StorePutEvent(env, *this, std::move(item), priority);
 }
 
 // Inline definition for Store::get
@@ -876,11 +850,19 @@ inline void Store::trigger_get() {
         if (it != items.end()) {
             auto item = *it;
             items.erase(it);
-            evt->set_value(item->to_string());
+            evt->set_value(item);
             evt->on_succeed();
             get_waiters.erase(get_waiters.begin() + i);
             continue;
         }
         ++i;
     }
+}
+
+inline void Store::print_items() const {
+    std::cout << "[Store " << name << "] items:"<<items.size()<<std::endl;
+    for (const auto& item : items) {
+        std::cout << ' ' << item->to_string()<< std::endl;
+    }
+    std::cout << '\n';
 }
