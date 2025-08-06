@@ -126,7 +126,7 @@ int main() {
 Below is a sample usage demonstrating a patient flow with dependent tasks :
 
 ```cpp
-#include "csimpy_env.h"
+#include "csimpy_env.h" // modify path accordingly
 
 /**
  * Demonstrates a simple patient flow simulation:
