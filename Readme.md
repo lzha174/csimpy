@@ -85,7 +85,7 @@ co_await AnyOfEvent{env, {&d1, &d2}};
 
 ### Store Example
 ```cpp
-#include "include//csimpy//csimpy_env.h"
+#include "include//csimpy//csimpy_env.h" //change accordingly
 #include "include//examples/staffitem.h"
 CSimpyEnv env;
 
