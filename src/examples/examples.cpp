@@ -92,9 +92,9 @@ void example_2() {
 void example_3() {
     CSimpyEnv env;
     auto proc_all_wait = env.create_task([&env]() -> Task {
-        SimDelay d1(env, 5);
-        SimDelay d2(env, 10);
-        co_await AllOfEvent{env, {&d1, &d2}};
+        auto d1 = std::make_shared<SimDelay>(env, 5);
+        auto d2 = std::make_shared<SimDelay>(env, 10);
+        co_await AllOfEvent{env, {d1, d2}};
         std::cout << "[" << env.sim_time << "] All delays finished.\n";
     });
     env.schedule(proc_all_wait, "proc_all_wait");
@@ -113,8 +113,8 @@ void example_4() {
     auto task1 = env.create_task([&env, &shared_event, &shared_event_1]() -> Task {
         co_await SimDelay(env, 1);
         std::cout << "[" << env.sim_time << "] task1 waiting on shared_event or timeout\n";
-        auto timeout = SimDelay(env, 5);
-        co_await AllOfEvent{env, {shared_event, shared_event_1}};
+        auto timeout = std::make_shared<SimDelay>(env, 5);
+        co_await AllOfEvent{env, {timeout, shared_event, shared_event_1}};
         std::cout << "[" << env.sim_time << "] task1 finished waiting (timeout and event)\n";
     });
     auto task2 = env.create_task([&env, &shared_event, &shared_event_1]() -> Task {
@@ -182,9 +182,9 @@ void example_5() {
     CSimpyEnv env;
     auto proc_any_wait = env.create_task([&env]() -> Task {
         std::cout << "[" << env.sim_time << "] proc_any_wait started\n";
-        SimDelay d1(env, 5);
-        SimDelay d2(env, 10);
-        co_await AnyOfEvent{env, {&d1, &d2}};
+        auto d1 = std::make_shared<SimDelay>(env, 5);
+        auto d2 = std::make_shared<SimDelay>(env, 10);
+        co_await AnyOfEvent{env, {d1, d2}};
         std::cout << "[" << env.sim_time << "] AnyOfEvent triggered after one delay\n";
     });
     env.schedule(proc_any_wait, "proc_any_wait");

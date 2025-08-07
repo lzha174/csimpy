@@ -1,13 +1,6 @@
-#include "include//csimpy//csimpy_env.h" // modify path accordingly
+#include "include//csimpy//csimpy_env.h"
 
-/**
- * Demonstrates a simple patient flow simulation:
- * 1. Patient registers (10 time units).
- * 2. After registration, the patient starts seeing a doctor and doing a lab test in parallel.
- * 3. Doctor consultation takes 20 time units.
- * 4. Lab test takes 40 time units.
- * 5. Patient signs out after both tasks are complete.
- */
+
 void patient_flow() {
     CSimpyEnv env;
 
@@ -17,24 +10,24 @@ void patient_flow() {
         std::cout << "[" << env.sim_time << "] patient finishes registration\n";
     });
 
-    auto& reg_event = register_task->get_completion_event(); // capture once
+    auto reg_event = register_task->get_completion_event(); // capture once
 
     auto see_doctor_task = env.create_task([&env, &reg_event]() -> Task {
-        co_await reg_event;
+        co_await *reg_event;
         std::cout << "[" << env.sim_time << "] patient starts seeing doctor\n";
         co_await SimDelay(env, 20);
         std::cout << "[" << env.sim_time << "] patient finishes seeing doctor\n";
     });
 
     auto lab_test_task = env.create_task([&env, &reg_event]() -> Task {
-        co_await reg_event;
+        co_await *reg_event;
         std::cout << "[" << env.sim_time << "] patient starts lab test\n";
         co_await SimDelay(env, 40);
         std::cout << "[" << env.sim_time << "] patient finishes lab test\n";
     });
 
     auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
-        co_await AllOfEvent(env, {&lab_test_task->get_completion_event(), &see_doctor_task->get_completion_event()});
+        co_await AllOfEvent(env, {lab_test_task->get_completion_event(), see_doctor_task->get_completion_event()});
         std::cout << "[" << env.sim_time << "] patient signs out\n";
     });
 

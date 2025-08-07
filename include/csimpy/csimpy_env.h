@@ -284,12 +284,7 @@ struct AllOfEvent : SimEventBase {
 
     AllOfEvent(CSimpyEnv& env_, std::vector<std::shared_ptr<SimEvent>> evts) : events(std::move(evts)), env(env_) {
     }
-    // Additional constructor to allow initializer_list of SimEvent* for {env, {&e1, &e2}}
-    AllOfEvent(CSimpyEnv& env_, std::initializer_list<SimEvent*> evts) : env(env_) {
-        for (auto* e : evts) {
-            events.push_back(std::shared_ptr<SimEvent>(e));
-        }
-    }
+
 
     void count(int time) {
         ++completed;
@@ -355,12 +350,6 @@ struct AnyOfEvent : SimEventBase {
 
     AnyOfEvent(CSimpyEnv& env_, std::vector<std::shared_ptr<SimEvent>> evts)
         : events(std::move(evts)), env(env_) {}
-    // Additional constructor to allow initializer_list of SimEvent* for {env, {&e1, &e2}}
-    AnyOfEvent(CSimpyEnv& env_, std::initializer_list<SimEvent*> evts) : env(env_) {
-        for (auto* e : evts) {
-            events.push_back(std::shared_ptr<SimEvent>(e));
-        }
-    }
 
     void trigger_now(int time) {
         if (triggered) return; // prevent double trigger
@@ -841,7 +830,7 @@ inline void Store::trigger_get() {
         [](const std::shared_ptr<StoreGetEvent>& a, const std::shared_ptr<StoreGetEvent>& b) {
             return static_cast<int>(a->priority) > static_cast<int>(b->priority);
         });
-    std::cout << "waiter size "<<get_waiters.size()<<std::endl;
+    //std::cout << "waiter size "<<get_waiters.size()<<std::endl;
     for (size_t i = 0; i < get_waiters.size();) {
         auto& evt = get_waiters[i];
         auto it = std::find_if(items.begin(), items.end(),

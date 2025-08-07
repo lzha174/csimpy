@@ -85,36 +85,42 @@ co_await AnyOfEvent{env, {&d1, &d2}};
 
 ### Store Example
 ```cpp
-#include "csimpy_env.h"
+#include "include//csimpy//csimpy_env.h"
+#include "include//examples/staffitem.h"
 CSimpyEnv env;
 
 Store store(env, 5);
 
-auto task = env.create_task([]() -> Task {
-    StaffItem staff1("Alice", 1, "Nurse", 2);
-    StaffItem staff2("Bob", 2, "Doctor", 3);
+auto test_task = env.create_task([]() -> Task {
+        co_await SimDelay(env, 1);
 
-    std::cout << "[" << env.sim_time << "] Putting Alice\n";
-    co_await store.put(staff1);
-    std::cout << "[" << env.sim_time << "] Putting Bob\n";
-    co_await store.put(staff2);
+        StaffItem staff1("Alice", 1, "Nurse", 2);
+        StaffItem staff2("Bob", 2, "Doctor", 3);
 
-    std::cout << "[" << env.sim_time << "] Getting item with id == 2\n";
-    auto filter = [](const std::shared_ptr<ItemBase>& item) {
-        return item->id == 2;
-    };
-    auto val = co_await store.get(filter);
-    std::cout << "[" << env.sim_time << "] Got item with id == "
-              << std::get<std::string>(val) << std::endl;
+        std::cout << "[" << env.sim_time << "] Putting Alice\n";
+        co_await store.put(staff1);
+        std::cout << "[" << env.sim_time << "] Putting Bob\n";
+        co_await store.put(staff2);
 
-    std::cout << "[" << env.sim_time << "] Getting next available item (no filter)\n";
-    auto next_val = co_await store.get();
-    std::cout << "[" << env.sim_time << "] Got item: "
-              << std::get<std::string>(next_val) << std::endl;
-});
+        std::cout << "[" << env.sim_time << "] Getting item with id == 2\n";
+        auto filter = [](const std::shared_ptr<ItemBase>& item) {
+            return item->id == 2;
+        };
+        auto val = co_await store.get(std::make_shared<std::function<bool(const std::shared_ptr<ItemBase>&)>>(filter));
+        {
+
+            std::cout << "[" << env.sim_time << "] Got item with id == " << val->to_string() << std::endl;
+        }
+
+        std::cout << "[" << env.sim_time << "] Getting next available item (no filter)\n";
+        auto next_val = co_await store.get(std::make_shared<std::function<bool(const std::shared_ptr<ItemBase>&)>>([](const std::shared_ptr<ItemBase>&){ return true; }));
+        {
+            std::cout << "[" << env.sim_time << "] Got item: " << next_val->to_string() << std::endl;
+        }
+    });
 
 int main() {
-    env.schedule(task, "store_example");
+    env.schedule(test_task, "store_example");
     env.run();
 };
 ```
@@ -126,16 +132,9 @@ int main() {
 Below is a sample usage demonstrating a patient flow with dependent tasks :
 
 ```cpp
-#include "csimpy_env.h" // modify path accordingly
+#include "include//csimpy//csimpy_env.h"
 
-/**
- * Demonstrates a simple patient flow simulation:
- * 1. Patient registers (10 time units).
- * 2. After registration, the patient starts seeing a doctor and doing a lab test in parallel.
- * 3. Doctor consultation takes 20 time units.
- * 4. Lab test takes 40 time units.
- * 5. Patient signs out after both tasks are complete.
- */
+
 void patient_flow() {
     CSimpyEnv env;
 
@@ -145,24 +144,24 @@ void patient_flow() {
         std::cout << "[" << env.sim_time << "] patient finishes registration\n";
     });
 
-    auto& reg_event = register_task->get_completion_event(); // capture once
+    auto reg_event = register_task->get_completion_event(); // capture once
 
     auto see_doctor_task = env.create_task([&env, &reg_event]() -> Task {
-        co_await reg_event;
+        co_await *reg_event;
         std::cout << "[" << env.sim_time << "] patient starts seeing doctor\n";
         co_await SimDelay(env, 20);
         std::cout << "[" << env.sim_time << "] patient finishes seeing doctor\n";
     });
 
     auto lab_test_task = env.create_task([&env, &reg_event]() -> Task {
-        co_await reg_event;
+        co_await *reg_event;
         std::cout << "[" << env.sim_time << "] patient starts lab test\n";
         co_await SimDelay(env, 40);
         std::cout << "[" << env.sim_time << "] patient finishes lab test\n";
     });
 
     auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
-        co_await AllOfEvent(env, {&lab_test_task->get_completion_event(), &see_doctor_task->get_completion_event()});
+        co_await AllOfEvent(env, {lab_test_task->get_completion_event(), see_doctor_task->get_completion_event()});
         std::cout << "[" << env.sim_time << "] patient signs out\n";
     });
 
