@@ -13,4 +13,3 @@ void example_priority_store();
 void example_carwash_with_container();
 void example_gas_station();
 void example_staff_shifts();
-void example_ed_sim();
