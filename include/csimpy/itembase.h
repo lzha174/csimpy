@@ -1,3 +1,7 @@
+// Required for map, shared_ptr, and any
+#include <map>
+#include <memory>
+#include <any>
 //
 // Created by ozhang on 03/08/2025.
 //
@@ -19,6 +23,21 @@ struct ItemBase {
     }
 
     virtual ItemBase* clone() const = 0;
+};
+
+// MapItem: an item with a map_value member
+struct MapItem : public ItemBase {
+    std::map<int, std::any> map_value;
+
+    explicit MapItem(std::string n, int i) : ItemBase(std::move(n), i) {}
+
+    std::string to_string() const override {
+        return "MapItem(" + name + ", id=" + std::to_string(id) + ")";
+    }
+
+    ItemBase* clone() const override {
+        return new MapItem(*this);
+    }
 };
 
 

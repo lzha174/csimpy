@@ -7,7 +7,7 @@
 
 #include <vector>
 #include <memory>
-#include "EDStaff.h"
+#include "EDstaff.h"
 
 class StaffManager {
 private:
@@ -27,7 +27,7 @@ public:
     // Find a staff member by ID
     std::shared_ptr<EDStaff> get_staff_by_id(int id) const {
         for (const auto& staff : staff_list) {
-            if (staff->get_id() == id) {
+            if (staff->id == id) {
                 return staff;
             }
         }

@@ -1,6 +1,6 @@
 #include "../include/examples/examples.h"
 
 int main() {
-    example_8();
+    example_ed_sim();
 
 };

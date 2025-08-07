@@ -32,6 +32,7 @@ constexpr bool DEBUG_MEMORY = false;
 
 struct SimEventBase {
     int sim_time;
+    std::shared_ptr<ItemBase> value;
     int delay = 0;
     size_t unique_id;
     static inline std::atomic<size_t> uid_gen{0};
@@ -40,32 +41,13 @@ struct SimEventBase {
     SimEventBase() : unique_id(++uid_gen) {}
     virtual void resume() = 0;
     virtual ~SimEventBase() = default;
-    void* operator new(std::size_t sz) {
-        void* p = std::malloc(sz);
-        size_t id = ++alloc_counter;
-        alloc_map[p] = id;
-        if constexpr (DEBUG_MEMORY) {
-            std::cout << "[ALLOC] id=" << id << " size=" << sz << " bytes\n";
-        }
-        return p;
-    }
-    void operator delete(void* p) noexcept {
-        auto it = alloc_map.find(p);
-        size_t id = (it != alloc_map.end()) ? it->second : 0;
-        if constexpr (DEBUG_MEMORY) {
-            std::cout << "[FREE] id=" << id << "\n";
-        }
-        alloc_map.erase(p);
-        std::free(p);
-    }
 };
 
 
 struct CompareSimEvent {
-    bool operator()(const SimEventBase* a, const SimEventBase* b) {
+    bool operator()(const std::shared_ptr<SimEventBase>& a, const std::shared_ptr<SimEventBase>& b) const {
         if (a->sim_time != b->sim_time)
-            return a->sim_time > b->sim_time; // later time loses
-        // tie break: use unique_id so older (smaller) wins
+            return a->sim_time > b->sim_time;
         return a->unique_id > b->unique_id;
     }
 };
@@ -73,10 +55,14 @@ class CSimpyEnv {
 public:
     int sim_time = 0;
 
-    std::priority_queue<SimEventBase*, std::vector<SimEventBase*>, CompareSimEvent> event_queue;
+    std::priority_queue<
+        std::shared_ptr<SimEventBase>,
+        std::vector<std::shared_ptr<SimEventBase>>,
+        CompareSimEvent
+    > event_queue;
     std::vector<std::shared_ptr<Task>> active_tasks;
     std::vector<std::shared_ptr<void>> active_functors;
-    void schedule(SimEventBase*);
+    void schedule(std::shared_ptr<SimEventBase>);
     void schedule(std::shared_ptr<Task> t, const std::string& label) ;
     template<typename F>
     std::shared_ptr<Task> create_task(F&& coroutine_func);
@@ -101,7 +87,7 @@ struct CoroutineProcess : SimEventBase {
 };
 
 struct SimEvent : SimEventBase {
-    std::shared_ptr<ItemBase> value;
+
     CSimpyEnv& env;
     std::vector<std::function<void(int)>> callbacks;
     bool done = false;
@@ -121,7 +107,7 @@ struct SimEvent : SimEventBase {
 
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         callbacks.emplace_back([this, h, label](int time) {
-            env.schedule(new CoroutineProcess(time, h, "SimEvent::callback -> " + label));
+            env.schedule(std::make_shared<CoroutineProcess>(time, h, "SimEvent::callback -> " + label));
         });
     }
 
@@ -147,17 +133,17 @@ struct SimEvent : SimEventBase {
         trigger();
     }
 
-    virtual SimEvent* clone_for_schedule() const {
-        auto* clone = new SimEvent(env);
+   virtual std::shared_ptr<SimEvent> clone_for_schedule() const {
+        auto clone = std::make_shared<SimEvent>(env);
         clone->value = value;
         clone->done = done;
         return clone;
     }
 
     // Schedules a heap-allocated copy of this event at the given time and clears callbacks.
-    void on_succeed() {
+    virtual void on_succeed() {
         done = true;
-        SimEvent* heap_event = this->clone_for_schedule();
+        auto heap_event = this->clone_for_schedule();
         heap_event->callbacks = std::move(this->callbacks);
         //heap_event->sim_time = this->sim_time;
         this->callbacks.clear();
@@ -231,8 +217,8 @@ struct Task {
     Task(const Task&) = delete;
     Task& operator=(const Task&) = delete;
 
-    SimEvent& get_completion_event() {
-        return *h.promise().completion_event;
+    std::shared_ptr<SimEvent> get_completion_event() {
+        return h.promise().completion_event;
     }
 
     CSimpyEnv& get_env() {
@@ -266,8 +252,8 @@ struct SimDelay : SimEvent {
         sim_time = env.sim_time + delay;
     }
 
-    SimEvent* clone_for_schedule() const override {
-        auto* clone = new SimDelay(env, delay);
+    std::shared_ptr<SimEvent> clone_for_schedule() const override {
+        auto clone = std::make_shared<SimDelay>(env, delay);
         clone->done = done;
         return clone;
     }
@@ -275,13 +261,11 @@ struct SimDelay : SimEvent {
     void await_suspend(std::coroutine_handle<> h,
                        const std::string& label = "?") {
         callbacks.emplace_back([this, h, label](int when) {
-            env.schedule(new CoroutineProcess(
+            env.schedule(std::make_shared<CoroutineProcess>(
                 when, h, "SimDelay::resume handler -> " + label));
         });
 
         this->on_succeed();
-
-
     }
 
     void resume() override {
@@ -293,23 +277,41 @@ struct SimDelay : SimEvent {
 };
 // Waits for all of a set of SimEvents to complete, then triggers itself.
 struct AllOfEvent : SimEventBase {
-    std::vector<SimEvent*> events;
+    std::vector<std::shared_ptr<SimEvent>> events;
     std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
     int completed = 0;
     CSimpyEnv& env;
 
-    AllOfEvent(CSimpyEnv& env_, std::vector<SimEvent*> evts) : events(std::move(evts)), env(env_) {
-        // Removed lambda trampoline and heap-allocated fake awaiters from constructor
-        auto x = 3;
+    AllOfEvent(CSimpyEnv& env_, std::vector<std::shared_ptr<SimEvent>> evts) : events(std::move(evts)), env(env_) {
+    }
+    // Additional constructor to allow initializer_list of SimEvent* for {env, {&e1, &e2}}
+    AllOfEvent(CSimpyEnv& env_, std::initializer_list<SimEvent*> evts) : env(env_) {
+        for (auto* e : evts) {
+            events.push_back(std::shared_ptr<SimEvent>(e));
+        }
     }
 
     void count(int time) {
         ++completed;
         if (completed == static_cast<int>(events.size())) {
             // Schedule this AllOfEvent itself (heap-allocated)
-            auto self = new AllOfEvent(env, events);  // note: shallow copy of `events`
+            auto self = std::make_shared<AllOfEvent>(env, events);  // note: shallow copy of `events`
             self->waiters = std::move(waiters);       // transfer ownership of waiters
-            self->sim_time = time;                    // assign the current time
+            self->sim_time = time;
+
+            // Ensure this->value is always a valid FinishItem with populated map_value
+            if (!this->value) {
+                this->value = std::make_shared<MapItem>("allof", 101);
+            }
+            auto map_item = std::dynamic_pointer_cast<MapItem>(this->value);
+            if (map_item) {
+                for (const auto& ev : events) {
+                    if (ev->value) {
+                        map_item->map_value[ev->value->id] = ev->value;
+                    }
+                }
+            }
+            // assign the current time
             env.schedule(self);
         }
     }
@@ -318,59 +320,59 @@ struct AllOfEvent : SimEventBase {
 
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         waiters.emplace_back(h, label);
-        for (SimEvent* e : events) {
-
+        for (const std::shared_ptr<SimEvent>& e : events) {
             e->callbacks.emplace_back([this](int t) {
                 this->count(t);
             });
-            if (e->done && dynamic_cast<SimDelay*>(e) == nullptr) {
-                // it still has callback to allof event and is not a SimDelay
+            if (e->done && dynamic_cast<SimDelay*>(e.get()) == nullptr) {
                 e->on_succeed();
             }
-
-            if (auto* delay = dynamic_cast<SimDelay*>(e)) {
-
+            if (auto* delay = dynamic_cast<SimDelay*>(e.get())) {
                 delay->on_succeed();
-
             }
         }
     }
 
     auto await_resume() const {
-        return std::string("all_done");
+        return value;
     }
 
     void resume() override {
         for (const auto& [wh, label] : waiters) {
-            env.schedule(new CoroutineProcess(env.sim_time, wh, "AllOfEvent::resume handler-> " + label));
+            env.schedule(std::make_shared<CoroutineProcess>(env.sim_time, wh, "AllOfEvent::resume handler-> " + label));
         }
         waiters.clear();
-
     }
 };
 
 
 // Waits for *any* of a set of SimEvents to complete, then triggers itself.
 struct AnyOfEvent : SimEventBase {
-    std::vector<SimEvent*> events;
+    std::vector<std::shared_ptr<SimEvent>> events;
     std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
     bool triggered = false;
     CSimpyEnv& env;
 
-    AnyOfEvent(CSimpyEnv& env_, std::vector<SimEvent*> evts)
+    AnyOfEvent(CSimpyEnv& env_, std::vector<std::shared_ptr<SimEvent>> evts)
         : events(std::move(evts)), env(env_) {}
+    // Additional constructor to allow initializer_list of SimEvent* for {env, {&e1, &e2}}
+    AnyOfEvent(CSimpyEnv& env_, std::initializer_list<SimEvent*> evts) : env(env_) {
+        for (auto* e : evts) {
+            events.push_back(std::shared_ptr<SimEvent>(e));
+        }
+    }
 
     void trigger_now(int time) {
         if (triggered) return; // prevent double trigger
         triggered = true;
 
         // Remove all callbacks from other events so they won't fire later
-        for (auto* e : events) {
+        for (auto& e : events) {
             e->callbacks.clear();
         }
 
         // Schedule this AnyOfEvent
-        auto self = new AnyOfEvent(env, events);
+        auto self = std::make_shared<AnyOfEvent>(env, events);
         self->waiters = std::move(waiters);
         self->sim_time = time;
         env.schedule(self);
@@ -381,21 +383,19 @@ struct AnyOfEvent : SimEventBase {
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         waiters.emplace_back(h, label);
 
-        for (SimEvent* e : events) {
+        for (auto& e : events) {
             e->callbacks.emplace_back([this](int t) {
                 this->trigger_now(t);
             });
 
             // Handle events that are already done
-            if (e->done && dynamic_cast<SimDelay*>(e) == nullptr) {
+            if (e->done && dynamic_cast<SimDelay*>(e.get()) == nullptr) {
                 // it still has callback to anyof event and is not a SimDelay
                 e->on_succeed();
             }
 
-            if (auto* delay = dynamic_cast<SimDelay*>(e)) {
-
+            if (auto* delay = dynamic_cast<SimDelay*>(e.get())) {
                 delay->on_succeed();
-
             }
         }
     }
@@ -406,7 +406,7 @@ struct AnyOfEvent : SimEventBase {
 
     void resume() override {
         for (const auto& [wh, label] : waiters) {
-            env.schedule(new CoroutineProcess(env.sim_time, wh, "AnyOfEvent::resume handler-> " + label));
+            env.schedule(std::make_shared<CoroutineProcess>(env.sim_time, wh, "AnyOfEvent::resume handler-> " + label));
         }
         waiters.clear();
     }
@@ -545,7 +545,7 @@ struct ContainerPutEvent : SimEvent {
 
             // Separate callback to resume coroutine
             self->callbacks.emplace_back([keep_alive, h](int time) {
-                keep_alive->env.schedule(new CoroutineProcess(time, h, "ContainerPut::callback -> "));
+                keep_alive->env.schedule(std::make_shared<CoroutineProcess>(time, h, "ContainerPut::callback -> "));
             });
             self->container.trigger_put();
         }
@@ -570,11 +570,10 @@ struct ContainerPutEvent : SimEvent {
         trigger();
     }
 
-    virtual SimEvent* clone_for_schedule() const override {
-        auto* clone = new ContainerPutEvent(env, container, value);
+    std::shared_ptr<SimEvent> clone_for_schedule() const override {
+        auto clone = std::make_shared<ContainerPutEvent>(env, container, value);
         clone->callbacks = callbacks;
         clone->done = done;
-
         return clone;
     }
 };
@@ -607,7 +606,7 @@ struct ContainerGetEvent : SimEvent {
 
             // Separate callback to resume coroutine
             self->callbacks.emplace_back([keep_alive, h](int time) {
-                keep_alive->env.schedule(new CoroutineProcess(time, h, "ContainerGet::callback -> "));
+                keep_alive->env.schedule(std::make_shared<CoroutineProcess>(time, h, "ContainerGet::callback -> "));
             });
             self->container.trigger_get();
         }
@@ -632,11 +631,10 @@ struct ContainerGetEvent : SimEvent {
         trigger();
     }
 
-    virtual SimEvent* clone_for_schedule() const override {
-        auto* clone = new ContainerGetEvent(env, container, value);
+    std::shared_ptr<SimEvent> clone_for_schedule() const override {
+        auto clone = std::make_shared<ContainerGetEvent>(env, container, value);
         clone->callbacks = callbacks;
         clone->done = done;
-
         return clone;
     }
 };
@@ -683,14 +681,15 @@ struct Store {
 
     auto put(ItemBase& item, Priority priority = Priority::Low); // clone overload
     auto put(std::shared_ptr<ItemBase> item, Priority priority = Priority::Low); // take ownership overload
-    auto get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter = {}, Priority priority = Priority::Low);
-
+    auto get(std::shared_ptr<std::function<bool(const std::shared_ptr<ItemBase>&)>> filter_ptr, Priority priority = Priority::Low);
+private:
+    auto _put_impl(std::shared_ptr<ItemBase> item, Priority priority);
 
 
 };
 
 // StorePutEvent
-struct StorePutEvent : SimEvent {
+struct StorePutEvent : SimEvent, std::enable_shared_from_this<StorePutEvent> {
     CSimpyEnv& env;
     Store& store;
     std::shared_ptr<ItemBase> item;
@@ -699,7 +698,6 @@ struct StorePutEvent : SimEvent {
     StorePutEvent(CSimpyEnv& env_, Store& s, std::shared_ptr<ItemBase> it, Priority prio = Priority::Low)
         : SimEvent(env_), env(env_), store(s), item(std::move(it)), priority(prio) {
         sim_time = env.sim_time;
-
     }
 
     struct Awaiter {
@@ -709,39 +707,28 @@ struct StorePutEvent : SimEvent {
 
         void await_suspend(std::coroutine_handle<> h) {
             auto keep_alive = self;
-            self->store.await_put(keep_alive);
-
-            self->callbacks.emplace_back([keep_alive](int) {
-                keep_alive->store.trigger_get();
-            });
-
             self->callbacks.emplace_back([keep_alive, h](int t) {
                 keep_alive->env.schedule(
-                    new CoroutineProcess(t, h, "StorePut::callback -> "));
+                    std::make_shared<CoroutineProcess>(t, h, "StorePut::callback -> "));
             });
-            self->store.trigger_put();
         }
 
         auto await_resume() { return self->item; }
     };
 
-    auto operator co_await() && {
-        auto ptr = std::make_shared<StorePutEvent>(std::move(*this));
-        return Awaiter{ptr};
-    }
-
     void resume() override { trigger(); }
 
-    SimEvent* clone_for_schedule() const override {
-        auto* clone = new StorePutEvent(env, store, item, priority);
-        clone->callbacks = callbacks;
-        clone->done = done;
-        return clone;
+    // Remove clone_for_schedule
+
+    void on_succeed() override {
+        assert(dynamic_cast<StorePutEvent*>(this) == this);
+        done = true;
+        env.schedule(shared_from_this());
     }
 };
 
 // StoreGetEvent
-struct StoreGetEvent : SimEvent {
+struct StoreGetEvent : SimEvent, std::enable_shared_from_this<StoreGetEvent> {
     CSimpyEnv& env;
     Store& store;
     Priority priority;
@@ -758,55 +745,68 @@ struct StoreGetEvent : SimEvent {
 
         bool await_ready() const noexcept { return false; }
 
+        // Rewritten to avoid re-wrapping shared_ptr
         void await_suspend(std::coroutine_handle<> h) {
-            auto keep_alive = self;
-            // Pass along the filter if present.
-            self->store.await_get(keep_alive);
-
-            self->callbacks.emplace_back([keep_alive](int) {
-                keep_alive->store.trigger_put();
-            });
-
+            auto keep_alive = self; // already a shared_ptr
             self->callbacks.emplace_back([keep_alive, h](int t) {
                 keep_alive->env.schedule(
-                    new CoroutineProcess(t, h, "StoreGet::callback -> "));
+                    std::make_shared<CoroutineProcess>(t, h, "StoreGet::callback -> "));
             });
-            self->store.trigger_get();
-
         }
 
         auto await_resume() { return self->value; }
     };
 
-    auto operator co_await() && {
-        auto ptr = std::make_shared<StoreGetEvent>(std::move(*this));
-        return Awaiter{ptr};
-    }
-
     void resume() override { trigger(); }
 
-    SimEvent* clone_for_schedule() const override {
-        auto* clone = new StoreGetEvent(env, store, item_filter, priority);
-        clone->callbacks = callbacks;
-        clone->done = done;
-        return clone;
+    // Remove clone_for_schedule
+
+    void on_succeed() override {
+        assert(dynamic_cast<StoreGetEvent*>(this) == this);
+        done = true;
+        env.schedule(shared_from_this());
     }
 };
 
-// Inline definition for Store::put
+
+inline StoreGetEvent::Awaiter operator co_await(std::shared_ptr<StoreGetEvent> event) {
+    return StoreGetEvent::Awaiter{event};
+}
+
+inline StorePutEvent::Awaiter operator co_await(std::shared_ptr<StorePutEvent> event) {
+    return StorePutEvent::Awaiter{event};
+}
+
+// Private helper for Store::put
+inline auto Store::_put_impl(std::shared_ptr<ItemBase> item, Priority priority) {
+    auto put_event_ptr = std::make_shared<StorePutEvent>(StorePutEvent(env, *this, std::move(item), priority));
+    await_put(put_event_ptr);
+    put_event_ptr->callbacks.emplace_back([this](int) {
+        this->trigger_get();
+    });
+    trigger_put();
+    return put_event_ptr;
+}
+
 inline auto Store::put(ItemBase& item, Priority priority) {
-    auto ptr = std::shared_ptr<ItemBase>(item.clone());
-    return StorePutEvent(env, *this, std::move(ptr), priority);
+    return _put_impl(std::shared_ptr<ItemBase>(item.clone()), priority);
 }
 
-// new overload: take ownership directly, no clone
 inline auto Store::put(std::shared_ptr<ItemBase> item, Priority priority) {
-    return StorePutEvent(env, *this, std::move(item), priority);
+    return _put_impl(std::move(item), priority);
 }
 
-// Inline definition for Store::get
-inline auto Store::get(std::function<bool(const std::shared_ptr<ItemBase>&)> filter, Priority priority) {
-    return StoreGetEvent(env, *this, std::move(filter), priority);
+
+// Overload taking a shared_ptr filter to extend filter lifetime
+inline auto Store::get(std::shared_ptr<std::function<bool(const std::shared_ptr<ItemBase>&)>> filter_ptr, Priority priority) {
+    std::function<bool(const std::shared_ptr<ItemBase>&)> filter = filter_ptr ? *filter_ptr : std::function<bool(const std::shared_ptr<ItemBase>&)>();
+    auto get_event_ptr = std::make_shared<StoreGetEvent>(env, *this, std::move(filter), priority);
+    await_get(get_event_ptr);
+    get_event_ptr->callbacks.emplace_back([this](int) {
+        this->trigger_put();
+    });
+    trigger_get();
+    return get_event_ptr;
 }
 
 
@@ -841,6 +841,7 @@ inline void Store::trigger_get() {
         [](const std::shared_ptr<StoreGetEvent>& a, const std::shared_ptr<StoreGetEvent>& b) {
             return static_cast<int>(a->priority) > static_cast<int>(b->priority);
         });
+    std::cout << "waiter size "<<get_waiters.size()<<std::endl;
     for (size_t i = 0; i < get_waiters.size();) {
         auto& evt = get_waiters[i];
         auto it = std::find_if(items.begin(), items.end(),

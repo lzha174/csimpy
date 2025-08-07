@@ -3,6 +3,9 @@
 #include "../../include/csimpy/csimpy_env.h"
 #include "../../include/examples/staffitem.h"
 #include "../../include/examples/EDstaff.h"
+#include "../../include/examples/staffmanager.h"
+#include "../../include/examples/job.h"
+#include <memory>
 
 /**
  * Example 1:
@@ -22,7 +25,7 @@ void example_1() {
         std::cout << "[" << env.sim_time << "] process_a started\n";
         co_await SimDelay(env, 5);
         std::cout << "[" << env.sim_time << "] process_a now waiting on process_c\n";
-        co_await LabeledAwait{proc_c->get_completion_event(), "process_a"};
+        co_await LabeledAwait{*proc_c->get_completion_event(), "process_a"};
         std::cout << "[" << env.sim_time << "] process_a resumed after process_c\n";
         co_await SimDelay(env, 25);
         std::cout << "[" << env.sim_time << "] process_a finished \n";
@@ -32,9 +35,9 @@ void example_1() {
         std::cout << "[" << env.sim_time << "] process_b started\n";
         co_await SimDelay(env, 10);
         std::cout << "[" << env.sim_time << "] process_b now waiting on process_c\n";
-        co_await LabeledAwait{proc_c->get_completion_event(), "process_b"};
+        co_await *proc_c->get_completion_event();
         std::cout << "[" << env.sim_time << "] process_b resumed after process_c\n";
-        co_await AllOfEvent{env, {&proc_c->get_completion_event(), &proc_a->get_completion_event()}};
+        co_await AllOfEvent{env, {proc_c->get_completion_event(), proc_a->get_completion_event()}};
         std::cout << "[" << env.sim_time << "] proc_b finished waiting allofevent\n";
     });
 
@@ -111,7 +114,7 @@ void example_4() {
         co_await SimDelay(env, 1);
         std::cout << "[" << env.sim_time << "] task1 waiting on shared_event or timeout\n";
         auto timeout = SimDelay(env, 5);
-        co_await AllOfEvent{env, {&timeout, shared_event.get(), shared_event_1.get()}};
+        co_await AllOfEvent{env, {shared_event, shared_event_1}};
         std::cout << "[" << env.sim_time << "] task1 finished waiting (timeout and event)\n";
     });
     auto task2 = env.create_task([&env, &shared_event, &shared_event_1]() -> Task {
@@ -142,24 +145,24 @@ void example_patient_flow() {
         std::cout << "[" << env.sim_time << "] patient finishes registration\n";
     });
 
-    auto& reg_event = register_task->get_completion_event(); // capture once
+    auto reg_event = register_task->get_completion_event(); // capture once
 
     auto see_doctor_task = env.create_task([&env, &reg_event]() -> Task {
-        co_await reg_event;
+        co_await *reg_event;
         std::cout << "[" << env.sim_time << "] patient starts seeing doctor\n";
         co_await SimDelay(env, 20);
         std::cout << "[" << env.sim_time << "] patient finishes seeing doctor\n";
     });
 
     auto lab_test_task = env.create_task([&env, &reg_event]() -> Task {
-        co_await reg_event;
+        co_await *reg_event;
         std::cout << "[" << env.sim_time << "] patient starts lab test\n";
         co_await SimDelay(env, 40);
         std::cout << "[" << env.sim_time << "] patient finishes lab test\n";
     });
 
     auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
-        co_await AllOfEvent(env, {&lab_test_task->get_completion_event(), &see_doctor_task->get_completion_event()});
+        co_await AllOfEvent(env, {lab_test_task->get_completion_event(), see_doctor_task->get_completion_event()});
         std::cout << "[" << env.sim_time << "] patient signs out\n";
     });
 
@@ -204,9 +207,9 @@ void example_6() {
 
     auto proc_b = env.create_task([&env, &proc_a]() -> Task {
         std::cout << "[" << env.sim_time << "] proc_b started\n";
-        SimDelay d1(env, 10);
+        auto d1 = std::make_shared<SimDelay>(env, 10);
         std::cout << "[" << env.sim_time << "] proc_b waiting on proc_a or 10 delay\n";
-        co_await AnyOfEvent{env, {&proc_a->get_completion_event(), &d1}};
+        co_await AnyOfEvent{env, {proc_a->get_completion_event(), d1}};
         std::cout << "[" << env.sim_time << "] proc_b resumed after AnyOfEvent\n";
     });
 
@@ -264,14 +267,14 @@ void example_8() {
         auto filter = [](const std::shared_ptr<ItemBase>& item) {
             return item->id == 2;
         };
-        auto val = co_await store.get(filter);
+        auto val = co_await store.get(std::make_shared<std::function<bool(const std::shared_ptr<ItemBase>&)>>(filter));
         {
 
             std::cout << "[" << env.sim_time << "] Got item with id == " << val->to_string() << std::endl;
         }
 
         std::cout << "[" << env.sim_time << "] Getting next available item (no filter)\n";
-        auto next_val = co_await store.get();
+        auto next_val = co_await store.get(std::make_shared<std::function<bool(const std::shared_ptr<ItemBase>&)>>([](const std::shared_ptr<ItemBase>&){ return true; }));
         {
             std::cout << "[" << env.sim_time << "] Got item: " << next_val->to_string() << std::endl;
         }
@@ -505,7 +508,8 @@ void example_staff_shifts() {
             auto filter = [&](const std::shared_ptr<ItemBase>& item) {
                 return item->name == staff.name;
             };
-            auto val = co_await break_store.get(filter);
+            auto filter_ptr = std::make_shared<std::function<bool(const std::shared_ptr<ItemBase>&)>>(filter);
+            auto val = co_await break_store.get(filter_ptr);
 
             std::cout << "[" << settings.current_time_str(env.sim_time) << "] " << staff.name << " acquired break slot\n";
 
@@ -537,6 +541,171 @@ void example_staff_shifts() {
     for (const auto& br : mike.get_breaks()) {
         env.schedule(make_break_task(mike, br), "mike_break_" + std::to_string(mike_idx++));
     }
+
+    env.run();
+}
+
+
+
+void example_ed_sim() {
+    using namespace std::chrono;
+
+    // Simulation start: Aug 4 2025 00:00
+    SimSettings settings(make_time(2025, 8, 4, 0, 0));
+    std::cout << "Simulation reference start: " << settings.current_time_str(0) << "\n";
+
+    // Create staff and assign shifts/breaks exactly like before
+    auto john = std::make_shared<EDStaff>("John", 1, Skill::Junior);
+    auto mike = std::make_shared<EDStaff>("Mike", 2, Skill::Mid);
+    std::vector<Shift> john_shifts = {
+        Shift{make_time(2025, 8, 4, 0, 0), make_time(2025, 8, 4, 2, 0)},
+        Shift{make_time(2025, 8, 4, 9, 0), make_time(2025, 8, 4, 16, 0)},
+        Shift{make_time(2025, 8, 5, 0, 0), make_time(2025, 8, 5, 2, 0)},
+        Shift{make_time(2025, 8, 5, 9, 0), make_time(2025, 8, 5, 16, 0)}
+    };
+    std::vector<Shift> mike_shifts = {
+        Shift{make_time(2025, 8, 4, 0, 0), make_time(2025, 8, 4, 2, 0)},
+        Shift{make_time(2025, 8, 4, 9, 0), make_time(2025, 8, 4, 16, 0)},
+        Shift{make_time(2025, 8, 5, 0, 0), make_time(2025, 8, 5, 2, 0)},
+        Shift{make_time(2025, 8, 5, 9, 0), make_time(2025, 8, 5, 16, 0)}
+    };
+    john->add_shifts(john_shifts);
+    mike->add_shifts(mike_shifts);
+    john->update_breaks(settings.start_time);
+    mike->update_breaks(settings.start_time);
+
+    // Create a staff manager.
+
+    // build and populate staff manager
+    StaffManager staff_manager;
+    staff_manager.add_staff(john);
+    staff_manager.add_staff(mike);
+
+    // Store modeling break slots, capacity 2
+    CSimpyEnv env;
+    Store break_store(env, 2, "break_store");
+    auto init_slots = env.create_task([&env, &break_store, &staff_manager]() -> Task {
+        for (auto& staff : staff_manager.get_all_staff()) {
+            auto staff_put =  break_store.put(staff);
+            co_await staff_put;
+        }
+        break_store.print_items();
+    });
+    env.schedule(init_slots, "init_break_slots");
+
+    // Helper to create a break task for a given staff and break shift
+    auto make_break_task = [&](std::shared_ptr<EDStaff> staff, const Shift& brk) {
+        return env.create_task([&env, &break_store, staff, brk, &settings]() -> Task {
+            // Wait until break start relative to simulation start
+            int wait_minutes = settings.minutes_from_start(brk.start);
+            if (wait_minutes > 0) {
+                co_await SimDelay(env, wait_minutes);
+            }
+
+            {
+                auto start_str = format_time(brk.start);
+                auto end_str = format_time(brk.end);
+                std::cout << "[" << settings.current_time_str(env.sim_time) << "] " << staff->name << " request break: "
+                          << start_str << " - " << end_str << "\n";
+            }
+
+            // Acquire a break slot: filter doesn't need to check name here since tokens are generic,
+            // but if you want to tie token to staff name you can include that logic.
+            auto filter = [&](const std::shared_ptr<ItemBase>& item) {
+                return item->name == staff->name;
+            };
+            auto filter_ptr = std::make_shared<std::function<bool(const std::shared_ptr<ItemBase>&)>>(filter);
+            auto val = co_await break_store.get(filter_ptr);
+
+            std::cout << "[" << settings.current_time_str(env.sim_time) << "] " << staff->name << " acquired break slot\n";
+
+            // verify break started at expected time
+            int expected_start = settings.minutes_from_start(brk.start);
+            if (env.sim_time != expected_start) {
+                std::cerr << "Warning: break start mismatch for " << staff->name << ": expected " << expected_start << " but got " << env.sim_time << "\n";
+            }
+            assert(env.sim_time == expected_start && "Break did not start at expected simulation time");
+
+            // Stay on break for duration
+            int break_duration = static_cast<int>(
+                duration_cast<minutes>(brk.end - brk.start).count());
+            if (break_duration > 0) {
+                co_await SimDelay(env, break_duration);
+            }
+            // release the slot back
+            co_await break_store.put(val);
+            std::cout << "[" << settings.current_time_str(env.sim_time) << "] " << staff->name << " end break\n";
+        });
+    };
+
+    // Schedule break tasks for all staff in manager
+    for (auto& staff : staff_manager.get_all_staff()) {
+        const auto& breaks = staff->get_breaks();
+        for (size_t i = 0; i < breaks.size(); ++i) {
+            env.schedule(make_break_task(staff, breaks[i]),
+                         staff->name + "_break_" + std::to_string(i));
+        }
+    }
+
+
+    // Create a sample job arriving at Aug 4 2025, 09:00
+    JobManager jobManager;
+    Job job1(make_time(2025, 8, 4, 9, 0), Minutes(60));
+    // request one Junior staff member
+    job1.skill_request[Skill::Junior] = 1;
+    job1.skill_request[Skill::Mid] = 1;
+    jobManager.add_job(job1);
+    // Print stored jobs
+    for (const auto& j : jobManager.jobs()) {
+        std::cout << "Job: " << j.to_string()  << std::endl;
+    }
+
+    // Dispatch job task
+    auto job_dispatch = env.create_task([&env, &settings, &job1, &break_store]() -> Task {
+        // Wait until the job's arrival time
+        int dispatch_delay = settings.minutes_from_start(job1.arrive_time);
+        if (dispatch_delay > 0) {
+            co_await SimDelay(env, dispatch_delay);
+        }
+        std::cout << "[" << settings.current_time_str(env.sim_time) << "] Dispatching job: "
+                  << job1.to_string() << std::endl;
+        auto duration = job1.duration;
+        int duration_min = static_cast<int>(duration.count());
+        // Acquire staff required for the job
+        std::vector<std::shared_ptr<SimEvent>> req_evts;
+        std::vector<std::shared_ptr<ItemBase>> acquired_staff;
+        for (const auto& [skill, count] : job1.skill_request) {
+            for (int i = 0; i < count; ++i) {
+                auto filter = [&](const std::shared_ptr<ItemBase>& item) {
+                    auto st = std::dynamic_pointer_cast<EDStaff>(item);
+                    return st && st->skill == skill;
+                };
+                auto filter_ptr = std::make_shared<std::function<bool(const std::shared_ptr<ItemBase>&)>>(filter);
+                auto staff_get = break_store.get(filter_ptr);
+                req_evts.push_back(staff_get);
+                //auto val = co_await staff_get;
+                //acquired_staff.push_back(val);
+            }
+        }
+        auto result_event = co_await AllOfEvent{env, req_evts};
+        auto result_map = std::dynamic_pointer_cast<MapItem>(result_event);
+        if (result_map) {
+            for (const auto& [id, val_any] : result_map->map_value) {
+                auto item = std::any_cast<std::shared_ptr<ItemBase>>(val_any);
+                acquired_staff.push_back(item);
+            }
+        }
+
+        co_await SimDelay(env, duration_min);
+        // Return staff to break_store
+        for (auto& staff : acquired_staff) {
+            std::cout<< "[" << settings.current_time_str(env.sim_time) << "] put staff back "<< staff->name<<std::endl;
+            co_await break_store.put(staff);
+        }
+        std::cout << "[" << settings.current_time_str(env.sim_time) << "] Job done"<<std::endl;
+
+    });
+    env.schedule(job_dispatch, "job_dispatch");
 
     env.run();
 }
