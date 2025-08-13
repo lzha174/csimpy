@@ -508,7 +508,7 @@ struct Container : ContainerBase {
 };
 
 
-struct ContainerPutEvent : SimEvent {
+struct ContainerPutEvent : SimEvent, std::enable_shared_from_this<ContainerPutEvent> {
     CSimpyEnv& env;
     Container& container;
     int value;
@@ -524,28 +524,15 @@ struct ContainerPutEvent : SimEvent {
 
         void await_suspend(std::coroutine_handle<> h) {
             auto keep_alive = self; // make a copy of the shared_ptr
-            // add put to queue
-            self->container.await_put(keep_alive, self->value);
-
-            // Separate callback to trigger gets first
-            self->callbacks.emplace_back([keep_alive](int /*time*/) {
-                keep_alive->container.trigger_get();
-            });
-
             // Separate callback to resume coroutine
             self->callbacks.emplace_back([keep_alive, h](int time) {
                 keep_alive->env.schedule(std::make_shared<CoroutineProcess>(time, h, "ContainerPut::callback -> "));
             });
-            self->container.trigger_put();
         }
 
         auto await_resume() { return self->value; }
     };
 
-    auto operator co_await() && {
-        auto ptr = std::make_shared<ContainerPutEvent>(std::move(*this));
-        return Awaiter{ptr};
-    }
 
 
     void trigger() {
@@ -559,17 +546,18 @@ struct ContainerPutEvent : SimEvent {
         trigger();
     }
 
-    std::shared_ptr<SimEvent> clone_for_schedule() const override {
-        auto clone = std::make_shared<ContainerPutEvent>(env, container, value);
-        clone->callbacks = callbacks;
-        clone->done = done;
-        return clone;
+    void on_succeed() override {
+        assert(dynamic_cast<ContainerPutEvent*>(this) == this);
+        done = true;
+        this->sim_time = env.sim_time;
+        env.schedule(shared_from_this());
     }
+
 };
 
 
 
-struct ContainerGetEvent : SimEvent {
+struct ContainerGetEvent : SimEvent, std::enable_shared_from_this<ContainerGetEvent> {
     CSimpyEnv& env;
     Container& container;
     int value;
@@ -585,29 +573,15 @@ struct ContainerGetEvent : SimEvent {
 
         void await_suspend(std::coroutine_handle<> h) {
             auto keep_alive = self; // make a copy of the shared_ptr
-            // add put to queue
-            self->container.await_get(keep_alive, self->value);
-
-            // Separate callback to trigger gets first
-            self->callbacks.emplace_back([keep_alive](int /*time*/) {
-                keep_alive->container.trigger_put();
-            });
 
             // Separate callback to resume coroutine
             self->callbacks.emplace_back([keep_alive, h](int time) {
                 keep_alive->env.schedule(std::make_shared<CoroutineProcess>(time, h, "ContainerGet::callback -> "));
             });
-            self->container.trigger_get();
         }
 
         auto await_resume() { return self->value; }
     };
-
-    auto operator co_await() && {
-        auto ptr = std::make_shared<ContainerGetEvent>(std::move(*this));
-        return Awaiter{ptr};
-    }
-
 
     void trigger() {
         for (auto& cb : callbacks) {
@@ -619,22 +593,39 @@ struct ContainerGetEvent : SimEvent {
     void resume() override {
         trigger();
     }
+    void on_succeed() override {
+        assert(dynamic_cast<ContainerGetEvent*>(this) == this);
+        done = true;
+        // Record the simulation time in the event itself
+        this->sim_time = env.sim_time;
 
-    std::shared_ptr<SimEvent> clone_for_schedule() const override {
-        auto clone = std::make_shared<ContainerGetEvent>(env, container, value);
-        clone->callbacks = callbacks;
-        clone->done = done;
-        return clone;
+        env.schedule(shared_from_this());
     }
 };
 
 // Inline definitions for Container::put and Container::get
 inline auto Container::put(int value) {
-    return ContainerPutEvent(env, *this, value);
+    auto put_event_ptr = std::make_shared<ContainerPutEvent>(env, *this, value);
+    await_put(put_event_ptr, value);
+    // Trigger the opposite side first so any waiting getters can proceed.
+    put_event_ptr->callbacks.emplace_back([this](int) {
+        this->trigger_get();
+    });
+    // Try to fulfill puts immediately if possible.
+    trigger_put();
+    return put_event_ptr;
 }
 
 inline auto Container::get(int value) {
-    return ContainerGetEvent(env, *this, value);
+    auto get_event_ptr = std::make_shared<ContainerGetEvent>(env, *this, value);
+    await_get(get_event_ptr, value);
+    // Trigger the opposite side first so any waiting putters can proceed.
+    get_event_ptr->callbacks.emplace_back([this](int) {
+        this->trigger_put();
+    });
+    // Try to fulfill gets immediately if possible.
+    trigger_get();
+    return get_event_ptr;
 }
 
 
@@ -712,6 +703,7 @@ struct StorePutEvent : SimEvent, std::enable_shared_from_this<StorePutEvent> {
     void on_succeed() override {
         assert(dynamic_cast<StorePutEvent*>(this) == this);
         done = true;
+        this->sim_time = env.sim_time;
         env.schedule(shared_from_this());
     }
 };
@@ -753,6 +745,7 @@ struct StoreGetEvent : SimEvent, std::enable_shared_from_this<StoreGetEvent> {
     void on_succeed() override {
         assert(dynamic_cast<StoreGetEvent*>(this) == this);
         done = true;
+        this->sim_time = env.sim_time;
         env.schedule(shared_from_this());
     }
 };
@@ -764,6 +757,14 @@ inline StoreGetEvent::Awaiter operator co_await(std::shared_ptr<StoreGetEvent> e
 
 inline StorePutEvent::Awaiter operator co_await(std::shared_ptr<StorePutEvent> event) {
     return StorePutEvent::Awaiter{event};
+}
+
+inline ContainerGetEvent::Awaiter operator co_await(std::shared_ptr<ContainerGetEvent> event) {
+    return ContainerGetEvent::Awaiter{event};
+}
+
+inline ContainerPutEvent::Awaiter operator co_await(std::shared_ptr<ContainerPutEvent> event) {
+    return ContainerPutEvent::Awaiter{event};
 }
 
 // Private helper for Store::put
