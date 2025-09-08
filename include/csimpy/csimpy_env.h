@@ -24,7 +24,7 @@ class Task;
 // Forward declarations for container event types
 struct ContainerPutEvent;
 struct ContainerGetEvent;
-constexpr bool DEBUG_PRINT_QUEUE = false;
+constexpr bool DEBUG_PRINT_QUEUE = true;
 constexpr bool DEBUG_RESOURCE = false;
 constexpr bool DEBUG_MEMORY = false;
 
@@ -34,6 +34,7 @@ struct SimEventBase {
     int sim_time;
     std::shared_ptr<ItemBase> value;
     int delay = 0;
+    bool done = false;
     size_t unique_id;
     static inline std::atomic<size_t> uid_gen{0};
     static inline std::atomic<size_t> alloc_counter{0};
@@ -86,13 +87,26 @@ struct CoroutineProcess : SimEventBase {
     }
 };
 
+// InterruptException definition
+struct InterruptException : public std::exception {
+    std::shared_ptr<ItemBase> cause;
+    explicit InterruptException(std::shared_ptr<ItemBase> c) : cause(std::move(c)) {}
+    const char* what() const noexcept override {
+        return "Process interrupted";
+    }
+};
+
 struct SimEvent : SimEventBase {
 
     CSimpyEnv& env;
     std::vector<std::function<void(int)>> callbacks;
-    bool done = false;
+
     // Optional filter for Store get events
     std::function<bool(const std::shared_ptr<ItemBase>&)> item_filter;
+
+    // Interrupt-related members
+    bool interrupted = false;
+    std::shared_ptr<ItemBase> interrupt_cause;
 
     SimEvent(CSimpyEnv& env_) : env(env_) {
         sim_time = env.sim_time + delay;
@@ -105,13 +119,12 @@ struct SimEvent : SimEventBase {
         return true;
     }
 
-    void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
-        callbacks.emplace_back([this, h, label](int time) {
-            env.schedule(std::make_shared<CoroutineProcess>(time, h, "SimEvent::callback -> " + label));
-        });
-    }
+    void await_suspend(std::coroutine_handle<> h, const std::string& label = "?");
 
     auto await_resume() const {
+        if (interrupted) {
+            throw InterruptException(interrupt_cause);
+        }
         return value;
     }
 
@@ -133,10 +146,20 @@ struct SimEvent : SimEventBase {
         trigger();
     }
 
-   virtual std::shared_ptr<SimEvent> clone_for_schedule() const {
+    // Interrupt support
+    virtual void interrupt(std::shared_ptr<ItemBase> cause = nullptr) {
+        interrupted = true;
+        interrupt_cause = std::move(cause);
+        sim_time = env.sim_time;  // reschedule immediately
+        on_succeed();
+    }
+
+    virtual std::shared_ptr<SimEvent> clone_for_schedule() const {
         auto clone = std::make_shared<SimEvent>(env);
         clone->value = value;
         clone->done = done;
+        clone->interrupted = interrupted;
+        clone->interrupt_cause = interrupt_cause;
         return clone;
     }
 
@@ -156,6 +179,7 @@ struct SimEvent : SimEventBase {
 
 struct TaskPromise {
     std::shared_ptr<SimEvent> completion_event;
+    SimEvent* current_event = nullptr;
 
     Task get_return_object();
 
@@ -170,7 +194,7 @@ struct TaskPromise {
             TaskPromise* promise;
 
             bool await_ready() noexcept { return false; }
-           void await_suspend(std::coroutine_handle<>) const noexcept {
+            void await_suspend(std::coroutine_handle<>) const noexcept {
                 if (promise->completion_event) {
                     // Signal completion with a FinishItem
                     auto finish_item = std::make_shared<FinishItem>();
@@ -228,6 +252,15 @@ struct Task {
     bool done() const {
         return h.done();
     }
+
+    void interrupt(std::shared_ptr<ItemBase> cause = nullptr) {
+        auto& prom = h.promise();
+        if (prom.current_event) {
+            prom.current_event->interrupted = true;
+            prom.current_event->interrupt_cause = std::move(cause);
+            prom.current_event->interrupt();
+        }
+    }
 };
 
 
@@ -264,7 +297,8 @@ struct SimDelay : SimEvent {
             env.schedule(std::make_shared<CoroutineProcess>(
                 when, h, "SimDelay::resume handler -> " + label));
         });
-
+        auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
+        ht.promise().current_event = this;
         this->on_succeed();
     }
 
@@ -273,6 +307,13 @@ struct SimDelay : SimEvent {
             std::cout << "[" << env.sim_time << "] SimDelay resumed.\n";
         }
         trigger();
+    }
+    void interrupt(std::shared_ptr<ItemBase> cause = nullptr) override {
+        interrupted = true;
+        delay = 0;
+        interrupt_cause = std::move(cause);
+        sim_time = env.sim_time;  // override scheduled delay, fire now
+        on_succeed();
     }
 };
 // Waits for all of a set of SimEvents to complete, then triggers itself.
@@ -856,4 +897,13 @@ inline void Store::print_items() const {
         std::cout << ' ' << item->to_string()<< std::endl;
     }
     std::cout << '\n';
+}
+
+// Out-of-line definition for SimEvent::await_suspend
+inline void SimEvent::await_suspend(std::coroutine_handle<> h, const std::string& label) {
+    callbacks.emplace_back([this, h, label](int time) {
+        env.schedule(std::make_shared<CoroutineProcess>(time, h, "SimEvent::callback -> " + label));
+    });
+    auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
+    ht.promise().current_event = this;
 }

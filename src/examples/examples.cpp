@@ -440,3 +440,35 @@ void example_gas_station() {
 
     env.run();
 }
+
+/**
+ * Example: Demonstrates interrupting a task and catching the InterruptException.
+ */
+void example_interrupt() {
+    CSimpyEnv env;
+
+    // Create a worker task that can be interrupted during a long delay.
+    auto worker = env.create_task([&env]() -> Task {
+        try {
+            std::cout << "[" << env.sim_time << "] worker: starting long delay\n";
+            co_await SimDelay(env, 20);
+            std::cout << "[" << env.sim_time << "] worker: finished long delay (not interrupted)\n";
+        } catch (const InterruptException& ex) {
+            std::cout << "[" << env.sim_time << "] worker: interrupted! Cause: ";
+
+        }
+    });
+
+    // Create a controller task that interrupts the worker after a short delay.
+    auto controller = env.create_task([&env, &worker]() -> Task {
+        co_await SimDelay(env, 5);
+        std::cout << "[" << env.sim_time << "] controller: interrupting worker\n";
+        // You can pass a cause (e.g. a MapItem or nullptr)
+        worker->interrupt(nullptr);
+        std::cout << "[" << env.sim_time << "] controller: worker interrupted\n";
+    });
+
+    env.schedule(worker, "worker");
+    env.schedule(controller, "worker");
+    env.run();
+}
