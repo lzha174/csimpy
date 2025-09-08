@@ -41,7 +41,7 @@ void example_1() {
     });
 
     env.schedule(proc_c, "process_c");
-    //env.schedule(proc_b, "process_b");
+    env.schedule(proc_b, "process_b");
     env.schedule(proc_a, "process_a");
 
     env.run();
