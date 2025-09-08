@@ -361,14 +361,21 @@ struct AllOfEvent : SimEventBase {
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         waiters.emplace_back(h, label);
         for (const std::shared_ptr<SimEvent>& e : events) {
-            e->callbacks.emplace_back([this](int t) {
-                this->count(t);
-            });
+
             if (e->done && dynamic_cast<SimDelay*>(e.get()) == nullptr) {
-                e->on_succeed();
+                this->count(env.sim_time);
             }
+
             if (auto* delay = dynamic_cast<SimDelay*>(e.get())) {
+                e->callbacks.emplace_back([this](int t) {
+                    this->count(t);
+                });
                 delay->on_succeed();
+            }
+            else {
+                e->callbacks.emplace_back([this](int t) {
+                    this->count(t);
+                });
             }
         }
     }

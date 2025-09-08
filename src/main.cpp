@@ -1,6 +1,6 @@
 #include "../include/examples/examples.h"
 
 int main() {
-    example_1();
+    example_3();
 
 };
