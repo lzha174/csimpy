@@ -580,6 +580,8 @@ struct ContainerPutEvent : SimEvent, std::enable_shared_from_this<ContainerPutEv
             self->callbacks.emplace_back([keep_alive, h](int time) {
                 keep_alive->env.schedule(std::make_shared<CoroutineProcess>(time, h, "ContainerPut::callback -> "));
             });
+            auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
+            ht.promise().current_event = self.get();
         }
 
         auto await_resume() { return self->value; }
@@ -630,6 +632,8 @@ struct ContainerGetEvent : SimEvent, std::enable_shared_from_this<ContainerGetEv
             self->callbacks.emplace_back([keep_alive, h](int time) {
                 keep_alive->env.schedule(std::make_shared<CoroutineProcess>(time, h, "ContainerGet::callback -> "));
             });
+            auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
+            ht.promise().current_event = self.get();
         }
 
         auto await_resume() { return self->value; }
@@ -743,6 +747,8 @@ struct StorePutEvent : SimEvent, std::enable_shared_from_this<StorePutEvent> {
                 keep_alive->env.schedule(
                     std::make_shared<CoroutineProcess>(t, h, "StorePut::callback -> "));
             });
+            auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
+            ht.promise().current_event = self.get();
         }
 
         auto await_resume() { return self->item; }
@@ -785,6 +791,8 @@ struct StoreGetEvent : SimEvent, std::enable_shared_from_this<StoreGetEvent> {
                 keep_alive->env.schedule(
                     std::make_shared<CoroutineProcess>(t, h, "StoreGet::callback -> "));
             });
+            auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
+            ht.promise().current_event = self.get();
         }
 
         auto await_resume() { return self->value; }

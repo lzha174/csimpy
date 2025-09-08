@@ -511,3 +511,25 @@ void example_event_interrupt() {
 
     env.run();
 }
+
+/**
+ * Example: Demonstrates using Store with AllOfEvent waiting on two put events.
+ */
+void example_store_allof() {
+    CSimpyEnv env;
+    Store store(env, 2, "store_allof");
+
+
+    auto proc = env.create_task([&env, &store]() -> Task {
+        StaffItem staff1("Alice", 1, "Nurse", 2);
+        StaffItem staff2("Bob", 2, "Doctor", 3);
+        std::cout << "[" << env.sim_time << "] starting put events\n";
+        auto put1 = store.put(staff1);
+        auto put2 = store.put(staff2);
+        co_await AllOfEvent{env, {put1, put2}};
+        std::cout << "[" << env.sim_time << "] both put events completed\n";
+    });
+
+    env.schedule(proc, "proc_store_allof");
+    env.run();
+}

@@ -1,6 +1,6 @@
 #include "../include/examples/examples.h"
 
 int main() {
-    example_3();
+    example_store_allof();
 
 };
