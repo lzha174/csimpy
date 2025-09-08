@@ -24,7 +24,7 @@ void example_1() {
         std::cout << "[" << env.sim_time << "] process_a started\n";
         co_await SimDelay(env, 5);
         std::cout << "[" << env.sim_time << "] process_a now waiting on process_c\n";
-        co_await LabeledAwait{*proc_c->get_completion_event(), "process_a"};
+        co_await LabeledAwait{*proc_c->get_completion_event(), "trigger process_a"};
         std::cout << "[" << env.sim_time << "] process_a resumed after process_c\n";
         co_await SimDelay(env, 25);
         std::cout << "[" << env.sim_time << "] process_a finished \n";
@@ -41,7 +41,7 @@ void example_1() {
     });
 
     env.schedule(proc_c, "process_c");
-    env.schedule(proc_b, "process_b");
+    //env.schedule(proc_b, "process_b");
     env.schedule(proc_a, "process_a");
 
     env.run();
@@ -455,7 +455,7 @@ void example_interrupt() {
             std::cout << "[" << env.sim_time << "] worker: finished long delay (not interrupted)\n";
         } catch (const InterruptException& ex) {
             std::cout << "[" << env.sim_time << "] worker: interrupted! Cause: ";
-
+            co_return;
         }
     });
 
@@ -464,11 +464,50 @@ void example_interrupt() {
         co_await SimDelay(env, 5);
         std::cout << "[" << env.sim_time << "] controller: interrupting worker\n";
         // You can pass a cause (e.g. a MapItem or nullptr)
-        worker->interrupt(nullptr);
+        worker->interrupt(std::make_shared<SimpleItem>("urgent_call", 1));
         std::cout << "[" << env.sim_time << "] controller: worker interrupted\n";
     });
 
     env.schedule(worker, "worker");
     env.schedule(controller, "worker");
+    env.run();
+}
+
+
+/**
+ * Example: Demonstrates interrupting a task waiting on a shared event.
+ */
+void example_event_interrupt() {
+    CSimpyEnv env;
+
+    auto shared_event = std::make_shared<SimEvent>(env);
+
+    // Worker waits on the shared_event
+    auto worker = env.create_task([&env, &shared_event]() -> Task {
+        try {
+            std::cout << "[" << env.sim_time << "] worker: waiting on shared_event\n";
+            co_await *shared_event;
+            std::cout << "[" << env.sim_time << "] worker: shared_event succeeded\n";
+        } catch (const InterruptException& ex) {
+            std::cout << "[" << env.sim_time << "] worker: interrupted while waiting, cause: ";
+            if (ex.cause) {
+                std::cout << ex.cause->to_string() << "\n";
+            } else {
+                std::cout << "(none)\n";
+            }
+        }
+    });
+
+    // Controller interrupts the worker after 5 time units
+    auto controller = env.create_task([&env, &worker]() -> Task {
+        co_await SimDelay(env, 5);
+        std::cout << "[" << env.sim_time << "] controller: interrupting worker (waiting on event)\n";
+        worker->interrupt(std::make_shared<SimpleItem>("timeout_interrupt", 2));
+        std::cout << "[" << env.sim_time << "] controller: worker interrupted\n";
+    });
+
+    env.schedule(worker, "worker_event_wait");
+    env.schedule(controller, "controller_event_interrupt");
+
     env.run();
 }

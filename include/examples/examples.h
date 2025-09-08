@@ -13,4 +13,5 @@ void example_priority_store();
 void example_carwash_with_container();
 void example_gas_station();
 void example_interrupt();
+void example_event_interrupt();
 

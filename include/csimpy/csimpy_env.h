@@ -24,7 +24,7 @@ class Task;
 // Forward declarations for container event types
 struct ContainerPutEvent;
 struct ContainerGetEvent;
-constexpr bool DEBUG_PRINT_QUEUE = true;
+constexpr bool DEBUG_PRINT_QUEUE = false;
 constexpr bool DEBUG_RESOURCE = false;
 constexpr bool DEBUG_MEMORY = false;
 
@@ -33,7 +33,6 @@ constexpr bool DEBUG_MEMORY = false;
 struct SimEventBase {
     int sim_time;
     std::shared_ptr<ItemBase> value;
-    int delay = 0;
     bool done = false;
     size_t unique_id;
     static inline std::atomic<size_t> uid_gen{0};
@@ -63,6 +62,8 @@ public:
     > event_queue;
     std::vector<std::shared_ptr<Task>> active_tasks;
     std::vector<std::shared_ptr<void>> active_functors;
+    // Track scheduled events by unique_id
+    std::unordered_map<size_t, std::weak_ptr<SimEventBase>> scheduled_events;
     void schedule(std::shared_ptr<SimEventBase>);
     void schedule(std::shared_ptr<Task> t, const std::string& label) ;
     template<typename F>
@@ -83,7 +84,9 @@ struct CoroutineProcess : SimEventBase {
         sim_time = t;
     }
     void resume() override {
-        handle.resume();
+        if (handle && !handle.done()) {   // ✅ only resume if still alive
+            handle.resume();
+        }
     }
 };
 
@@ -109,7 +112,7 @@ struct SimEvent : SimEventBase {
     std::shared_ptr<ItemBase> interrupt_cause;
 
     SimEvent(CSimpyEnv& env_) : env(env_) {
-        sim_time = env.sim_time + delay;
+        sim_time = env.sim_time;
     }
 
     bool await_ready() const noexcept {
@@ -160,6 +163,7 @@ struct SimEvent : SimEventBase {
         clone->done = done;
         clone->interrupted = interrupted;
         clone->interrupt_cause = interrupt_cause;
+        env.scheduled_events[clone->unique_id] = clone;
         return clone;
     }
 
@@ -167,9 +171,8 @@ struct SimEvent : SimEventBase {
     virtual void on_succeed() {
         done = true;
         auto heap_event = this->clone_for_schedule();
-        heap_event->callbacks = std::move(this->callbacks);
+        heap_event->callbacks = callbacks;
         //heap_event->sim_time = this->sim_time;
-        this->callbacks.clear();
         env.schedule(heap_event);
     }
 };
@@ -257,7 +260,7 @@ struct Task {
         auto& prom = h.promise();
         if (prom.current_event) {
             prom.current_event->interrupted = true;
-            prom.current_event->interrupt_cause = std::move(cause);
+            prom.current_event->interrupt_cause = cause;
             prom.current_event->interrupt();
         }
     }
@@ -286,8 +289,9 @@ struct SimDelay : SimEvent {
     }
 
     std::shared_ptr<SimEvent> clone_for_schedule() const override {
-        auto clone = std::make_shared<SimDelay>(env, delay);
+        auto clone = std::make_shared<SimDelay>(env, this->delay);
         clone->done = done;
+        env.scheduled_events[clone->unique_id] = clone;
         return clone;
     }
 
@@ -311,9 +315,9 @@ struct SimDelay : SimEvent {
     void interrupt(std::shared_ptr<ItemBase> cause = nullptr) override {
         interrupted = true;
         delay = 0;
-        interrupt_cause = std::move(cause);
+        interrupt_cause = cause;
         sim_time = env.sim_time;  // override scheduled delay, fire now
-        on_succeed();
+        trigger();
     }
 };
 // Waits for all of a set of SimEvents to complete, then triggers itself.

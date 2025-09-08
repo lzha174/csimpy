@@ -61,4 +61,9 @@ struct FinishItem : ItemBase {
 };
 
 
+struct SimpleItem : public ItemBase {
+    SimpleItem(std::string n, int i) : ItemBase(std::move(n), i) {}
+    ItemBase* clone() const override { return new SimpleItem(*this); }
+};
+
 #endif //ITEMBASE_H
