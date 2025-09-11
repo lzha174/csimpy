@@ -36,7 +36,8 @@ void example_1() {
         std::cout << "[" << env.sim_time << "] process_b now waiting on process_c\n";
         co_await *proc_c->get_completion_event();
         std::cout << "[" << env.sim_time << "] process_b resumed after process_c\n";
-        co_await AllOfEvent{env, {proc_c->get_completion_event(), proc_a->get_completion_event()}};
+        auto allof = std::make_shared<AllOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{proc_c->get_completion_event(), proc_a->get_completion_event()}, "allof_proc_b");
+        co_await *allof;
         std::cout << "[" << env.sim_time << "] proc_b finished waiting allofevent\n";
     });
 
@@ -93,7 +94,8 @@ void example_3() {
     auto proc_all_wait = env.create_task([&env]() -> Task {
         auto d1 = std::make_shared<SimDelay>(env, 5);
         auto d2 = std::make_shared<SimDelay>(env, 10);
-        co_await AllOfEvent{env, {d1, d2}};
+        auto allof = std::make_shared<AllOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{d1, d2}, "allof_proc_all_wait");
+        co_await *allof;
         std::cout << "[" << env.sim_time << "] All delays finished.\n";
     });
     env.schedule(proc_all_wait, "proc_all_wait");
@@ -113,7 +115,8 @@ void example_4() {
         co_await SimDelay(env, 1);
         std::cout << "[" << env.sim_time << "] task1 waiting on shared_event or timeout\n";
         auto timeout = std::make_shared<SimDelay>(env, 5);
-        co_await AllOfEvent{env, {timeout, shared_event, shared_event_1}};
+        auto allof = std::make_shared<AllOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{timeout, shared_event, shared_event_1}, "allof_task1");
+        co_await *allof;
         std::cout << "[" << env.sim_time << "] task1 finished waiting (timeout and event)\n";
     });
     auto task2 = env.create_task([&env, &shared_event, &shared_event_1]() -> Task {
@@ -161,7 +164,8 @@ void example_patient_flow() {
     });
 
     auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
-        co_await AllOfEvent(env, {lab_test_task->get_completion_event(), see_doctor_task->get_completion_event()});
+        auto allof = std::make_shared<AllOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{lab_test_task->get_completion_event(), see_doctor_task->get_completion_event()}, "allof_signout");
+        co_await *allof;
         std::cout << "[" << env.sim_time << "] patient signs out\n";
     });
 
@@ -183,7 +187,8 @@ void example_5() {
         std::cout << "[" << env.sim_time << "] proc_any_wait started\n";
         auto d1 = std::make_shared<SimDelay>(env, 5);
         auto d2 = std::make_shared<SimDelay>(env, 10);
-        co_await AnyOfEvent{env, {d1, d2}};
+        auto anyof = std::make_shared<AnyOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{d1, d2});
+        co_await *anyof;
         std::cout << "[" << env.sim_time << "] AnyOfEvent triggered after one delay\n";
     });
     env.schedule(proc_any_wait, "proc_any_wait");
@@ -208,7 +213,8 @@ void example_6() {
         std::cout << "[" << env.sim_time << "] proc_b started\n";
         auto d1 = std::make_shared<SimDelay>(env, 10);
         std::cout << "[" << env.sim_time << "] proc_b waiting on proc_a or 10 delay\n";
-        co_await AnyOfEvent{env, {proc_a->get_completion_event(), d1}};
+        auto anyof = std::make_shared<AnyOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{proc_a->get_completion_event(), d1});
+        co_await *anyof;
         std::cout << "[" << env.sim_time << "] proc_b resumed after AnyOfEvent\n";
     });
 
@@ -526,7 +532,8 @@ void example_store_allof() {
         auto put1 = store.put(staff1);
         auto put2 = store.put(staff2);
         auto delay = std::make_shared<SimDelay>(env, 10);
-        co_await AllOfEvent{env, {put1, put2, delay}};
+        auto allof = std::make_shared<AllOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{put1, put2, delay}, "allof_store");
+        co_await *allof;
         std::cout << "[" << env.sim_time << "] all put events completed\n";
     });
 
@@ -547,7 +554,8 @@ void example_allof_interrupt() {
             auto d1 = std::make_shared<SimDelay>(env, 10, "d1");
             auto d2 = std::make_shared<SimDelay>(env, 20, "d2");
             auto d3 = std::make_shared<SimDelay>(env, 30, "DE");
-            co_await AllOfEvent{env, {d1, d2, d3}, "ALLOF"};
+            auto allof = std::make_shared<AllOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{d1, d2, d3}, "ALLOF");
+            co_await *allof;
             std::cout << "[" << env.sim_time << "] worker: AllOfEvent completed\n";
         } catch (const InterruptException& ex) {
             std::cout << "[" << env.sim_time << "] worker: interrupted while waiting on AllOfEvent, cause: ";
@@ -556,6 +564,7 @@ void example_allof_interrupt() {
             } else {
                 std::cout << "(none)\n";
             }
+            co_return;
         }
     });
 

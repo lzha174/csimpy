@@ -323,7 +323,7 @@ struct SimDelay : SimEvent {
     }
 };
 // Waits for all of a set of SimEvents to complete, then triggers itself.
-struct AllOfEvent : SimEvent {
+struct AllOfEvent : SimEvent, std::enable_shared_from_this<AllOfEvent> {
     using SimEvent::SimEvent;  // inherit constructor
     std::vector<std::shared_ptr<SimEvent>> events;
     std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
@@ -334,15 +334,12 @@ struct AllOfEvent : SimEvent {
         : SimEvent(env_, std::move(lbl)), events(std::move(evts)), env(env_) {
     }
 
-
     void count(int time) {
         assert(completed < static_cast<int>(events.size()));
         ++completed;
         if (completed == static_cast<int>(events.size())) {
             // Schedule this AllOfEvent itself (heap-allocated)
-            auto self = std::make_shared<AllOfEvent>(env, events, debug_label);  // note: shallow copy of `events`
-            self->waiters = std::move(waiters);       // transfer ownership of waiters
-            self->sim_time = time;
+            auto self = shared_from_this();
 
             // Ensure this->value is always a valid FinishItem with populated map_value
             if (!this->value) {
@@ -357,6 +354,7 @@ struct AllOfEvent : SimEvent {
                 }
             }
             // assign the current time
+            self->sim_time = env.sim_time;
             env.schedule(self);
         }
     }
@@ -368,17 +366,26 @@ struct AllOfEvent : SimEvent {
         // Set the current event on the task promise
         auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
         ht.promise().current_event = this;
+        auto self = shared_from_this();
         for (const std::shared_ptr<SimEvent>& e : events) {
             if (e->done && dynamic_cast<SimDelay*>(e.get()) == nullptr) {
                 this->count(env.sim_time);
             } else if (auto* delay = dynamic_cast<SimDelay*>(e.get())) {
-                e->callbacks.emplace_back([this](int t) {
-                    this->count(t);
+                e->callbacks.emplace_back([weak_self = std::weak_ptr<AllOfEvent>(self)](int t) {
+                    if (auto s = weak_self.lock()) {
+                        if (!s->done) {
+                            s->count(t);
+                        }
+                    }
                 });
                 delay->on_succeed();
             } else {
-                e->callbacks.emplace_back([this](int t) {
-                    this->count(t);
+                e->callbacks.emplace_back([weak_self = std::weak_ptr<AllOfEvent>(self)](int t) {
+                    if (auto s = weak_self.lock()) {
+                        if (!s->done) {
+                            s->count(t);
+                        }
+                    }
                 });
             }
         }
@@ -398,14 +405,37 @@ struct AllOfEvent : SimEvent {
         waiters.clear();
     }
 
-    virtual void on_succeed() {
+    virtual void on_succeed() override {
+        if (done) return;
         done = true;
+        this->sim_time = env.sim_time;
+        env.schedule(shared_from_this());
+    }
+
+    // Override interrupt to mark as interrupted and remove callbacks from children
+    void interrupt(std::shared_ptr<ItemBase> cause = nullptr) override {
+        if (done) return;
+        interrupted = true;
+        interrupt_cause = std::move(cause);
+        // remove this AllOfEvent's callbacks from all child events
+        for (auto& e : events) {
+            e->callbacks.erase(
+                std::remove_if(e->callbacks.begin(), e->callbacks.end(),
+                    [this](const std::function<void(int)>& cb) {
+                        // We cannot easily compare lambdas, so clear all
+                        return true;
+                    }),
+                e->callbacks.end());
+        }
+        done = true;
+        sim_time = env.sim_time;
+        env.schedule(shared_from_this());
     }
 };
 
 
 // Waits for *any* of a set of SimEvents to complete, then triggers itself.
-struct AnyOfEvent : SimEvent {
+struct AnyOfEvent : SimEvent, std::enable_shared_from_this<AnyOfEvent> {
     using SimEvent::SimEvent;  // inherit constructor
     std::vector<std::shared_ptr<SimEvent>> events;
     std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
@@ -425,8 +455,7 @@ struct AnyOfEvent : SimEvent {
         }
 
         // Schedule this AnyOfEvent
-        auto self = std::make_shared<AnyOfEvent>(env, events);
-        self->waiters = std::move(waiters);
+        auto self = shared_from_this();
         self->sim_time = time;
         env.schedule(self);
     }
@@ -438,10 +467,14 @@ struct AnyOfEvent : SimEvent {
         // Set the current event on the task promise
         auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
         ht.promise().current_event = this;
-
+        auto self = shared_from_this();
         for (auto& e : events) {
-            e->callbacks.emplace_back([this](int t) {
-                this->trigger_now(t);
+            e->callbacks.emplace_back([weak_self = std::weak_ptr<AnyOfEvent>(self)](int t) {
+                if (auto s = weak_self.lock()) {
+                    if (!s->done) {
+                        s->trigger_now(t);
+                    }
+                }
             });
 
             // Handle events that are already done
