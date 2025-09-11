@@ -373,18 +373,15 @@ struct AllOfEvent : SimEvent, std::enable_shared_from_this<AllOfEvent> {
             } else if (auto* delay = dynamic_cast<SimDelay*>(e.get())) {
                 e->callbacks.emplace_back([weak_self = std::weak_ptr<AllOfEvent>(self)](int t) {
                     if (auto s = weak_self.lock()) {
-                        if (!s->done) {
                             s->count(t);
-                        }
                     }
                 });
                 delay->on_succeed();
             } else {
                 e->callbacks.emplace_back([weak_self = std::weak_ptr<AllOfEvent>(self)](int t) {
                     if (auto s = weak_self.lock()) {
-                        if (!s->done) {
+
                             s->count(t);
-                        }
                     }
                 });
             }
@@ -417,16 +414,6 @@ struct AllOfEvent : SimEvent, std::enable_shared_from_this<AllOfEvent> {
         if (done) return;
         interrupted = true;
         interrupt_cause = std::move(cause);
-        // remove this AllOfEvent's callbacks from all child events
-        for (auto& e : events) {
-            e->callbacks.erase(
-                std::remove_if(e->callbacks.begin(), e->callbacks.end(),
-                    [this](const std::function<void(int)>& cb) {
-                        // We cannot easily compare lambdas, so clear all
-                        return true;
-                    }),
-                e->callbacks.end());
-        }
         done = true;
         sim_time = env.sim_time;
         env.schedule(shared_from_this());
@@ -471,9 +458,8 @@ struct AnyOfEvent : SimEvent, std::enable_shared_from_this<AnyOfEvent> {
         for (auto& e : events) {
             e->callbacks.emplace_back([weak_self = std::weak_ptr<AnyOfEvent>(self)](int t) {
                 if (auto s = weak_self.lock()) {
-                    if (!s->done) {
+
                         s->trigger_now(t);
-                    }
                 }
             });
 
