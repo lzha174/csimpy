@@ -15,4 +15,5 @@ void example_gas_station();
 void example_interrupt();
 void example_event_interrupt();
 void example_store_allof();
+void example_allof_interrupt();
 

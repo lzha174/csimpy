@@ -111,7 +111,9 @@ struct SimEvent : SimEventBase {
     bool interrupted = false;
     std::shared_ptr<ItemBase> interrupt_cause;
 
-    SimEvent(CSimpyEnv& env_) : env(env_) {
+    std::string debug_label;
+
+    SimEvent(CSimpyEnv& env_, std::string lbl = "") : env(env_), debug_label(std::move(lbl)) {
         sim_time = env.sim_time;
     }
 
@@ -282,14 +284,14 @@ struct LabeledAwait {
 struct SimDelay : SimEvent {
     int delay;
 
-    SimDelay(CSimpyEnv& e, int d)
-        : SimEvent(e) {
+    SimDelay(CSimpyEnv& e, int d, std::string lbl = "")
+        : SimEvent(e, std::move(lbl)) {
         delay = d;
         sim_time = env.sim_time + delay;
     }
 
     std::shared_ptr<SimEvent> clone_for_schedule() const override {
-        auto clone = std::make_shared<SimDelay>(env, this->delay);
+        auto clone = std::make_shared<SimDelay>(env, this->delay, this->debug_label);
         clone->done = done;
         env.scheduled_events[clone->unique_id] = clone;
         return clone;
@@ -321,21 +323,24 @@ struct SimDelay : SimEvent {
     }
 };
 // Waits for all of a set of SimEvents to complete, then triggers itself.
-struct AllOfEvent : SimEventBase {
+struct AllOfEvent : SimEvent {
+    using SimEvent::SimEvent;  // inherit constructor
     std::vector<std::shared_ptr<SimEvent>> events;
     std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
     int completed = 0;
     CSimpyEnv& env;
 
-    AllOfEvent(CSimpyEnv& env_, std::vector<std::shared_ptr<SimEvent>> evts) : events(std::move(evts)), env(env_) {
+    AllOfEvent(CSimpyEnv& env_, std::vector<std::shared_ptr<SimEvent>> evts, std::string lbl = "")
+        : SimEvent(env_, std::move(lbl)), events(std::move(evts)), env(env_) {
     }
 
 
     void count(int time) {
+        assert(completed < static_cast<int>(events.size()));
         ++completed;
         if (completed == static_cast<int>(events.size())) {
             // Schedule this AllOfEvent itself (heap-allocated)
-            auto self = std::make_shared<AllOfEvent>(env, events);  // note: shallow copy of `events`
+            auto self = std::make_shared<AllOfEvent>(env, events, debug_label);  // note: shallow copy of `events`
             self->waiters = std::move(waiters);       // transfer ownership of waiters
             self->sim_time = time;
 
@@ -360,19 +365,18 @@ struct AllOfEvent : SimEventBase {
 
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         waiters.emplace_back(h, label);
+        // Set the current event on the task promise
+        auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
+        ht.promise().current_event = this;
         for (const std::shared_ptr<SimEvent>& e : events) {
-
             if (e->done && dynamic_cast<SimDelay*>(e.get()) == nullptr) {
                 this->count(env.sim_time);
-            }
-
-            if (auto* delay = dynamic_cast<SimDelay*>(e.get())) {
+            } else if (auto* delay = dynamic_cast<SimDelay*>(e.get())) {
                 e->callbacks.emplace_back([this](int t) {
                     this->count(t);
                 });
                 delay->on_succeed();
-            }
-            else {
+            } else {
                 e->callbacks.emplace_back([this](int t) {
                     this->count(t);
                 });
@@ -381,6 +385,9 @@ struct AllOfEvent : SimEventBase {
     }
 
     auto await_resume() const {
+        if (interrupted) {
+            throw InterruptException(interrupt_cause);
+        }
         return value;
     }
 
@@ -390,18 +397,23 @@ struct AllOfEvent : SimEventBase {
         }
         waiters.clear();
     }
+
+    virtual void on_succeed() {
+        done = true;
+    }
 };
 
 
 // Waits for *any* of a set of SimEvents to complete, then triggers itself.
-struct AnyOfEvent : SimEventBase {
+struct AnyOfEvent : SimEvent {
+    using SimEvent::SimEvent;  // inherit constructor
     std::vector<std::shared_ptr<SimEvent>> events;
     std::vector<std::pair<std::coroutine_handle<>, std::string>> waiters;
     bool triggered = false;
     CSimpyEnv& env;
 
     AnyOfEvent(CSimpyEnv& env_, std::vector<std::shared_ptr<SimEvent>> evts)
-        : events(std::move(evts)), env(env_) {}
+        : SimEvent(env_), events(std::move(evts)), env(env_) {}
 
     void trigger_now(int time) {
         if (triggered) return; // prevent double trigger
@@ -423,6 +435,9 @@ struct AnyOfEvent : SimEventBase {
 
     void await_suspend(std::coroutine_handle<> h, const std::string& label = "?") {
         waiters.emplace_back(h, label);
+        // Set the current event on the task promise
+        auto ht = std::coroutine_handle<TaskPromise>::from_address(h.address());
+        ht.promise().current_event = this;
 
         for (auto& e : events) {
             e->callbacks.emplace_back([this](int t) {
@@ -442,6 +457,9 @@ struct AnyOfEvent : SimEventBase {
     }
 
     auto await_resume() const {
+        if (interrupted) {
+            throw InterruptException(interrupt_cause);
+        }
         return std::string("any_done");
     }
 
