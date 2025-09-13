@@ -52,7 +52,8 @@ A resource store for holding `ItemBase`-derived objects with limited capacity.
 - Event-driven execution with time advancement
 - Automatic delay handling (`SimDelay`)
 - Coroutine-based task modeling
-- Support for composite events (like `AllOfEvent`)
+- Support for composite events (like `AllOfEvent`, `AnyOfEvent`)
+- Process interruption support (`task->interrupt(cause)`)
 - Event queue introspection (`print_event_queue_state()`)
 
 ---
@@ -71,18 +72,62 @@ co_await proc_c.get_completion_event(), "wait_for_proc_c"};
 
 ### Wait on Multiple Events
 ```cpp
-auto d1 = SimDelay(env, 5);
-auto d2 = SimDelay(env, 10);
-co_await AllOfEvent{env, {&d1, &d2}};
+auto d1 = std::make_shared<SimDelay>(env, 5);
+auto d2 = std::make_shared<SimDelay>(env, 10);
+auto allof = std::make_shared<AllOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{d1, d2});
+co_await *allof;
 ```
 
 ### Wait on Any Event
 ```cpp
-auto d1 = SimDelay(env, 5);
-auto d2 = SimDelay(env, 10);
-co_await AnyOfEvent{env, {&d1, &d2}};
+auto d1 = std::make_shared<SimDelay>(env, 5);
+auto d2 = std::make_shared<SimDelay>(env, 10);
+auto anyof = std::make_shared<AnyOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{d1, d2});
+co_await *anyof;
 ```
 
+### Process Interruption
+```cpp
+void example_porcess_interrupt() {
+    CSimpyEnv env;
+    auto worker = env.create_task([&env]() -> Task {
+    try {
+        std::cout << "[" << env.sim_time << "] worker: starting long delay\n";
+        co_await SimDelay(env, 20, "long_delay");
+        std::cout << "[" << env.sim_time << "] worker: finished long delay (not interrupted)\n";
+    } catch (const InterruptException& ex) {
+        std::cout << "[" << env.sim_time << "] worker: interrupted! Cause: "
+                  << (ex.cause ? ex.cause->to_string() : "(none)") << std::endl;
+    }
+});
+
+    auto controller = env.create_task([&env, &worker]() -> Task {
+        co_await SimDelay(env, 5, "controller_delay");
+        std::cout << "[" << env.sim_time << "] controller: interrupting worker\n";
+        worker->interrupt(std::make_shared<SimpleItem>("urgent_call", 999));
+        std::cout << "[" << env.sim_time << "] controller: worker interrupted\n";
+    });
+
+    env.schedule(worker, "worker");
+    env.schedule(controller, "controller");
+    env.run();
+}
+int main() {
+    example_porcess_interrupt();
+};
+
+```
+
+
+**Output:**
+```
+[0] worker: starting long delay
+[5] controller: interrupting worker
+[5] controller: worker interrupted
+[5] worker: interrupted! Cause: Item(urgent_call, id=999)
+```
+
+---
 ### Store Example
 ```cpp
 #include "include//csimpy//csimpy_env.h" //change accordingly
@@ -161,7 +206,11 @@ void patient_flow() {
     });
 
     auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
-        co_await AllOfEvent(env, {lab_test_task->get_completion_event(), see_doctor_task->get_completion_event()});
+        auto allof = std::make_shared<AllOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{
+            lab_test_task->get_completion_event(),
+            see_doctor_task->get_completion_event()
+        });
+        co_await *allof;
         std::cout << "[" << env.sim_time << "] patient signs out\n";
     });
 
@@ -191,7 +240,5 @@ int main() {
 
 ---
 
-## 📈 TODO
 
-- Support process cancellation and interruption
 - For more examples, see `examples.cpp` in the source repository.

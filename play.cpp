@@ -1,6 +1,34 @@
 #include "include//csimpy//csimpy_env.h"
 
 
+#include "include//csimpy//csimpy_env.h" // change accordingly
+
+void example_porcess_interrupt() {
+    CSimpyEnv env;
+    auto worker = env.create_task([&env]() -> Task {
+    try {
+        std::cout << "[" << env.sim_time << "] worker: starting long delay\n";
+        co_await SimDelay(env, 20, "long_delay");
+        std::cout << "[" << env.sim_time << "] worker: finished long delay (not interrupted)\n";
+    } catch (const InterruptException& ex) {
+        std::cout << "[" << env.sim_time << "] worker: interrupted! Cause: "
+                  << (ex.cause ? ex.cause->to_string() : "(none)") << std::endl;
+    }
+});
+
+    auto controller = env.create_task([&env, &worker]() -> Task {
+        co_await SimDelay(env, 5, "controller_delay");
+        std::cout << "[" << env.sim_time << "] controller: interrupting worker\n";
+        worker->interrupt(std::make_shared<SimpleItem>("urgent_call", 999));
+        std::cout << "[" << env.sim_time << "] controller: worker interrupted\n";
+    });
+
+    env.schedule(worker, "worker");
+    env.schedule(controller, "controller");
+    env.run();
+}
+
+
 void patient_flow() {
     CSimpyEnv env;
 
@@ -27,7 +55,11 @@ void patient_flow() {
     });
 
     auto signout_task = env.create_task([&env, &lab_test_task, &see_doctor_task]() -> Task {
-        co_await AllOfEvent(env, {lab_test_task->get_completion_event(), see_doctor_task->get_completion_event()});
+        auto allof = std::make_shared<AllOfEvent>(env, std::vector<std::shared_ptr<SimEvent>>{
+            lab_test_task->get_completion_event(),
+            see_doctor_task->get_completion_event()
+        });
+        co_await *allof;
         std::cout << "[" << env.sim_time << "] patient signs out\n";
     });
 
@@ -40,5 +72,5 @@ void patient_flow() {
 }
 
 int main() {
-    patient_flow();
+    example_porcess_interrupt();
 };

@@ -154,7 +154,7 @@ struct SimEvent : SimEventBase {
     // Interrupt support
     virtual void interrupt(std::shared_ptr<ItemBase> cause = nullptr) {
         interrupted = true;
-        interrupt_cause = std::move(cause);
+        interrupt_cause = cause;
         sim_time = env.sim_time;  // reschedule immediately
         on_succeed();
     }
@@ -261,9 +261,7 @@ struct Task {
     void interrupt(std::shared_ptr<ItemBase> cause = nullptr) {
         auto& prom = h.promise();
         if (prom.current_event) {
-            prom.current_event->interrupted = true;
-            prom.current_event->interrupt_cause = cause;
-            prom.current_event->interrupt();
+            prom.current_event->interrupt(cause);
         }
     }
 };
